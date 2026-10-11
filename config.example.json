@@ -1,0 +1,9 @@
+{
+  "model": "deepseek-flash",
+  "baseUrl": "https://api.deepseek.com",
+  "apiKey": "",
+  "temperature": 0.3,
+  "thinking": { "type": "disabled" },
+  "maxTextLength": 5000,
+  "cacheMaxEntries": 100
+}

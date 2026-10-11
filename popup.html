@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>文献译读</title>
+    <!-- Manifest V3 不允许内联脚本；样式放在本文件，脚本使用外部 popup.js。 -->
+    <style>
+      * { box-sizing: border-box; }
+      body { width: 340px; margin: 0; background: #f5f8fb; color: #24334a;
+        font: 13px/1.75 "Segoe UI", "Microsoft YaHei", sans-serif; }
+      main { padding: 22px; }
+      header { border-bottom: 1px solid #dbe4ed; padding-bottom: 16px; }
+      h1 { margin: 0 0 5px; color: #2c557a; font-size: 20px; font-weight: 650; }
+      p { margin: 0; }
+      .subtitle { color: #63748a; font-size: 12px; }
+      .model { background: #fff; border: 1px solid #dbe4ed; border-radius: 9px;
+        padding: 13px 14px; margin: 17px 0; }
+      .label { display: block; color: #63748a; font-size: 12px; margin-bottom: 4px; }
+      #model-name { display: block; font-size: 15px; overflow-wrap: anywhere; }
+      #status { margin-top: 8px; color: #63748a; font-size: 12px; overflow-wrap: anywhere; }
+      #status[data-state="error"] { color: #9b3535; }
+      kbd { display: inline-block; background: #fff; border: 1px solid #cbd5e1;
+        border-bottom-width: 2px; padding: 0 6px; border-radius: 4px;
+        font: 12px/1.8 Consolas, monospace; color: #2c557a; }
+      .help { margin-top: 12px; color: #52647a; }
+      code { font-family: Consolas, monospace; color: #2c557a; }
+      footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid #dbe4ed;
+        color: #63748a; font-size: 11px; }
+      .pdf-actions { display: grid; gap: 8px; margin-top: 16px; }
+      button { font: inherit; text-align: left; border: 1px solid #cbd9e5; border-radius: 6px;
+        background: white; color: #2c557a; padding: 9px 12px; cursor: pointer; }
+      button:hover { background: #eaf1f7; }
+      button:focus-visible { outline: 2px solid #335f86; outline-offset: 2px; }
+      button:disabled { opacity: .6; cursor: wait; }
+      #pdf-status { font-size: 12px; color: #9b3535; }
+    </style>
+    <script src="popup.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>文献译读</h1>
+        <p class="subtitle">网页与 PDF 选区 → 中文科研表达</p>
+      </header>
+      <section class="model" aria-label="已加载模型">
+        <span class="label">当前已加载模型</span>
+        <strong id="model-name">读取中…</strong>
+        <p id="status" role="status" aria-live="polite"></p>
+      </section>
+      <p>选中网页文字后按 <kbd>Y</kbd> 翻译，按 <kbd>Esc</kbd> 关闭结果。</p>
+      <p class="help">修改模型请直接编辑项目文件夹下 <code>config.json</code> 文件，刷新插件生效；随后刷新正在阅读的网页。</p>
+      <section class="pdf-actions" aria-label="PDF 阅读">
+        <button id="open-pdf" type="button">打开 PDF 阅读器</button>
+        <button id="open-current-pdf" type="button">使用当前页面地址打开 PDF</button>
+        <p id="pdf-status" role="status" aria-live="polite"></p>
+      </section>
+      <footer>本地 PDF 请在插件阅读器中选择或拖入。扫描版暂不支持。个人本地使用，请勿分享含密钥的扩展包。</footer>
+    </main>
+  </body>
+</html>

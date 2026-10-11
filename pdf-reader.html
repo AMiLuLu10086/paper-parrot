@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PDF 阅读 · 文献译读</title>
+    <!-- MV3：脚本、worker、字体与样式均来自本扩展，不使用 CDN 或内联脚本。 -->
+    <link rel="stylesheet" href="vendor/pdfjs/web/pdf_viewer.css">
+    <link rel="stylesheet" href="pdf-reader.css">
+    <script src="content.js" defer></script>
+    <script src="pdf-reader.js" type="module"></script>
+  </head>
+  <body>
+    <header class="reader-header">
+      <div class="identity"><strong>文献译读</strong><span>PDF 阅读</span></div>
+      <p class="shortcut">选中文字按 <kbd>Y</kbd> 翻译 · <kbd>Esc</kbd> 关闭译文</p>
+      <button id="open-file" type="button" disabled>打开本地 PDF</button>
+      <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
+    </header>
+    <form id="url-form" class="url-bar">
+      <label for="pdf-url">在线 PDF</label>
+      <input id="pdf-url" type="url" placeholder="粘贴 PDF 链接，也支持没有 .pdf 后缀的地址" autocomplete="off" spellcheck="false">
+      <button id="load-url" type="submit" disabled>打开链接</button>
+    </form>
+    <nav class="toolbar" aria-label="阅读控制">
+      <span id="document-name" title="尚未打开文献">尚未打开文献</span>
+      <div class="page-controls">
+        <button id="previous-page" type="button" aria-label="上一页" disabled>←</button>
+        <label for="page-number">页码</label>
+        <input id="page-number" type="number" min="1" value="1" aria-label="页码" disabled>
+        <span id="page-count">/ 0</span>
+        <button id="next-page" type="button" aria-label="下一页" disabled>→</button>
+      </div>
+      <div class="zoom-controls">
+        <button id="zoom-out" type="button" aria-label="缩小" disabled>−</button>
+        <output id="zoom-value" aria-label="缩放比例">100%</output>
+        <button id="zoom-in" type="button" aria-label="放大" disabled>＋</button>
+        <button id="fit-width" type="button" disabled>适应宽度</button>
+      </div>
+    </nav>
+    <div class="status-bar"><p id="reader-status" role="status" aria-live="polite">正在准备阅读器…</p><span>仅发送主动选择的文字</span></div>
+    <main class="reading-area" aria-label="PDF 文献">
+      <div id="empty-state">
+        <div class="paper-symbol" aria-hidden="true">PDF</div>
+        <h1>打开文献，选段翻译</h1>
+        <p>点击上方“打开本地 PDF”，或把文件拖到这里。</p>
+        <p>在线文献可粘贴链接。文件在本机解析，选中英文后按 Y 翻译。</p>
+        <p class="muted">支持文字版 PDF；扫描版、密码保护文件暂不支持。</p>
+      </div>
+      <!-- PDFViewer 要求滚动容器为绝对定位；组件维护可见页面渲染队列。 -->
+      <div id="viewer-container" tabindex="0"><div id="pdf-viewer" class="pdfViewer"></div></div>
+      <div id="drop-overlay" hidden>松开以打开 PDF</div>
+    </main>
+  </body>
+</html>
