@@ -4,11 +4,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { harness } = require('./verify-background.cjs');
 const root = path.resolve(__dirname, '..');
-let background = harness({ delay: 500 });
+const localStorage = {};
+let background = harness({ delay: 500, localStorage });
 let messages = 0;
 
 const bridge = `<script>
-  window.chrome = { runtime: { sendMessage: async (message) => {
+  const storageListeners = [];
+  let lastEnabled;
+  window.chrome = { storage: { onChanged: { addListener: (handler) => storageListeners.push(handler) } }, runtime: { getURL: (resource) => location.origin + '/' + resource, sendMessage: async (message) => {
     const response = await fetch('/message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) });
     if (!response.ok) throw new Error('Simulated communication failure');
     return response.json();
@@ -43,7 +46,12 @@ const bridge = `<script>
   });
   setInterval(async () => {
     const response = await fetch('/stats'); const stats = await response.json();
-    document.getElementById('stats').textContent = 'API 请求次数：' + stats.apiCalls + '；翻译消息次数：' + stats.messages;
+    const statsElement = document.getElementById('stats');
+    if (statsElement) statsElement.textContent = 'API 请求次数：' + stats.apiCalls + '；翻译消息次数：' + stats.messages;
+    if (lastEnabled !== stats.enabled) {
+      lastEnabled = stats.enabled;
+      for (const handler of storageListeners) handler({ literaturePluginEnabledV1: { newValue: stats.enabled } }, 'local');
+    }
   }, 300);
 </script>`;
 
@@ -75,20 +83,24 @@ const server = http.createServer(async (request, response) => {
       const message = await readBody(request);
       if (background.controls.mode === 'communication') { response.writeHead(503); response.end('Unavailable'); return; }
       if (message.type === 'TRANSLATE') messages++;
-      const result = await background.send(message);
+      const result = await background.send(message, 1, message.type === 'SET_PLUGIN_ENABLED' ? { url: 'chrome-extension://test-extension/popup.html' } : {});
       response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(result)); return;
     }
     if (request.method === 'POST' && url.pathname === '/control') {
       const { mode } = await readBody(request);
-      if (mode === 'reset') { background = harness({ delay: 500 }); messages = 0; }
-      else { background = harness({ mode: ['markup', 'copy-failure', 'slow'].includes(mode) ? 'success' : mode, delay: mode === 'slow' ? 3000 : 500, translation: mode === 'markup' ? '<img src=x onerror="alert(1)">科研译文' : '科研译文' }); messages = 0; }
+      if (mode === 'reset') { background = harness({ delay: 500, localStorage }); messages = 0; }
+      else { background = harness({ mode: ['markup', 'copy-failure', 'slow'].includes(mode) ? 'success' : mode, delay: mode === 'slow' ? 3000 : 500, translation: mode === 'markup' ? '<img src=x onerror="alert(1)">科研译文' : '科研译文', localStorage }); messages = 0; }
       response.end('ok'); return;
     }
     if (url.pathname === '/stats') {
-      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ apiCalls: background.stats.apiCalls, messages })); return;
+      const state = await background.send({ type: 'GET_PLUGIN_STATE' });
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ apiCalls: background.stats.apiCalls, messages, enabled: state.enabled })); return;
     }
-    if (url.pathname === '/content.js' || url.pathname === '/popup.js') {
+    if (['/content.js', '/popup.js', '/plugin-control.js'].includes(url.pathname)) {
       response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); response.end(fs.readFileSync(path.join(root, url.pathname.slice(1)))); return;
+    }
+    if (url.pathname === '/ui.css') {
+      response.setHeader('Content-Type', 'text/css; charset=utf-8'); response.end(fs.readFileSync(path.join(root, 'ui.css'))); return;
     }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (url.pathname === '/popup') {

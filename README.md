@@ -20,6 +20,9 @@ Copy-Item config.example.json config.json
 
 ## 功能与限制
 
+- 扩展控制面板和 PDF 阅读器中的“启用翻译”为同一个全局开关，默认开启，并记住状态；重启浏览器或重新加载扩展后仍保留。
+- 关闭后，所有已打开网页与 PDF 阅读页立即收起译文，停止快捷键翻译并中止正在等待的翻译请求；重新开启无需刷新页面，PDF 阅读、翻页与缩放始终可用。
+- 中止请求只停止本地等待，不能保证模型服务端停止生成或计费；按 Esc 或关闭译文浮窗仍然只隐藏结果。
 - 网页选区翻译、复制译文、手动重试和浏览器会话缓存。
 - 点击扩展图标可打开本地或在线 PDF，在扩展阅读页中选中文字并按 **Y**。
 - 扫描 PDF 需要 OCR，当前不支持；浏览器内置 PDF 阅读器无法直接使用此快捷键翻译。
@@ -40,4 +43,6 @@ Copy-Item config.example.json config.json
 node .verification/verify-background.cjs
 ```
 
-其他浏览器验证脚本保留在 `.verification` 中，运行前需按脚本要求配置浏览器和 Playwright 环境。验证生成的报告、截图和下载资源不纳入 Git。
+浏览器验证脚本保留在 `.verification` 中：`verify-native.cjs` 验证真实 Chromium 扩展及开关同步、取消与持久化，`verify-pdf.cjs` 验证 PDF 阅读和停用行为，`verify-ui.cjs` 验证长内容、错误状态与键盘操作。`verify-edge-reader.cjs` 使用真实 Edge 引擎和模拟扩展 API，不等同于 Edge 原生扩展安装测试。
+
+运行前需按脚本要求配置浏览器和 Playwright 环境。验证只使用模拟密钥和本地接口，报告、截图和下载资源不纳入 Git。

@@ -8,15 +8,18 @@ const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'background.js'), 'utf8');
 const CONFIG_KEY = 'literatureConfigSnapshotV1';
 const CACHE_KEY = 'literatureTranslationsV1';
+const PLUGIN_KEY = 'literaturePluginEnabledV1';
 const defaultConfig = { model: 'test-model', baseUrl: 'https://mock.invalid/v1', apiKey: 'test-secret-key', temperature: 0.3, maxTextLength: 5000, cacheMaxEntries: 100 };
 
 function harness(options = {}) {
   const storage = options.storage ?? {};
-  const stats = { configLoads: 0, apiCalls: 0, requests: [], timers: [] };
+  const localStorage = options.localStorage ?? {};
+  const storageListeners = [];
+  const stats = { configLoads: 0, apiCalls: 0, requests: [], timers: [], aborted: 0 };
   let listener;
   const handlers = {};
   const response = (body, status = 200) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
-  const controls = { mode: options.mode ?? 'success', delay: options.delay ?? 0, translation: options.translation ?? '科研译文', failCache: options.failCache ?? false, config: options.config ?? defaultConfig };
+  const controls = { mode: options.mode ?? 'success', delay: options.delay ?? 0, translation: options.translation ?? '科研译文', failCache: options.failCache ?? false, config: options.config ?? defaultConfig, ignoreAbort: false, failStateRead: false, failStateWrite: false, cacheReadGate: null, configGate: null };
   const chrome = {
     runtime: {
       id: 'test-extension',
@@ -25,8 +28,25 @@ function harness(options = {}) {
       onInstalled: { addListener: (handler) => { handlers.installed = handler; } },
       onStartup: { addListener: (handler) => { handlers.startup = handler; } },
     },
-    storage: { session: {
+    storage: {
+      onChanged: { addListener: (handler) => storageListeners.push(handler) },
+      local: {
+        async get(key) {
+          if (controls.failStateRead) throw Error('Simulated state read failure');
+          return { [key]: localStorage[key] };
+        },
+        async set(values) {
+          if (controls.failStateWrite) throw Error('Simulated state write failure');
+          const changes = {};
+          for (const [key, value] of Object.entries(values)) {
+            if (localStorage[key] !== value) changes[key] = { oldValue: localStorage[key], newValue: value };
+            localStorage[key] = value;
+          }
+          if (Object.keys(changes).length) for (const handler of storageListeners) handler(changes, 'local');
+        },
+      }, session: {
       async get(key) {
+        if (key === CACHE_KEY && controls.cacheReadGate) await controls.cacheReadGate;
         if (key === CACHE_KEY && controls.failCache) throw Error('Simulated cache failure');
         return { [key]: structuredClone(storage[key]) };
       },
@@ -44,16 +64,26 @@ function harness(options = {}) {
     async fetch(url, request) {
       if (url.endsWith('/config.json')) {
         stats.configLoads++;
+        if (controls.configGate) await controls.configGate;
         if (controls.mode === 'missing-config') return response('missing', 404);
         if (controls.mode === 'invalid-json-config') return response('{bad');
         return response(controls.config);
       }
       stats.apiCalls++;
       stats.requests.push({ url, ...request, parsed: JSON.parse(request.body) });
+      request.signal.addEventListener('abort', () => stats.aborted++, { once: true });
       if (controls.mode === 'timeout') {
         return new Promise((resolve, reject) => request.signal.addEventListener('abort', () => reject(Error('aborted')), { once: true }));
       }
-      if (controls.delay) await new Promise((resolve) => setTimeout(resolve, controls.delay));
+      if (controls.delay) await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { request.signal.removeEventListener('abort', abort); resolve(); }, controls.delay);
+        function abort() {
+          if (controls.ignoreAbort) return;
+          clearTimeout(timer);
+          reject(Error('aborted'));
+        }
+        request.signal.addEventListener('abort', abort, { once: true });
+      });
       if (controls.mode === 'network') throw Error('Network unavailable');
       if (typeof controls.mode === 'number') return response({ error: { message: `API rejected ${defaultConfig.apiKey} Bearer another-secret-key` } }, controls.mode);
       if (controls.mode === 'html-error') return response('<html>Error</html>', 404);
@@ -74,14 +104,14 @@ function harness(options = {}) {
       if (result !== true) { clearTimeout(guard); resolve(undefined); }
     });
   }
-  return { send, storage, stats, controls, handlers };
+  return { send, storage, localStorage, stats, controls, handlers };
 }
 
 let assertions = 0;
 function check(condition, label) { assert.ok(condition, label); assertions++; }
 async function run() {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-  const config = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'config.example.json'), 'utf8'));
   check(manifest.manifest_version === 3, 'Manifest V3');
   check(!manifest.web_accessible_resources && !manifest.externally_connectable, 'Configuration is private');
   check(manifest.content_scripts[0].all_frames === false, 'Only top frames');
@@ -200,6 +230,82 @@ async function run() {
   const incomplete = harness({ mode: 'incomplete' });
   for (let i = 0; i < 2; i++) check((await incomplete.send({ type: 'TRANSLATE', text: 'sample' })).incomplete, 'Truncation signaled');
   check(incomplete.stats.apiCalls === 2 && !incomplete.storage[CACHE_KEY], 'Truncation not cached');
+
+  const setEnabled = (target, enabled, url = 'chrome-extension://test-extension/popup.html') => target.send({ type: 'SET_PLUGIN_ENABLED', enabled }, 1, { url });
+  async function waitFor(predicate) {
+    for (let i = 0; i < 200; i++) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    throw Error('Fixture condition did not become ready');
+  }
+  const state = harness();
+  check((await state.send({ type: 'GET_PLUGIN_STATE' })).enabled === true && state.stats.configLoads === 0, 'Default state is independent of config');
+  check((await setEnabled(state, false)).enabled === false && state.localStorage[PLUGIN_KEY] === false, 'Off state persisted');
+  check((await state.send({ type: 'TRANSLATE', text: 'sample' })).error.code === 'PLUGIN_DISABLED' && state.stats.apiCalls === 0 && state.stats.configLoads === 0, 'Disabled translation never loads config or calls API');
+  const workerRestart = harness({ storage: state.storage, localStorage: state.localStorage });
+  check((await workerRestart.send({ type: 'GET_PLUGIN_STATE' })).enabled === false, 'State survives worker restart');
+  const browserRestart = harness({ localStorage: state.localStorage });
+  check((await browserRestart.send({ type: 'GET_PLUGIN_STATE' })).enabled === false, 'State survives fresh browser session');
+  check((await setEnabled(state, true, 'chrome-extension://test-extension/pdf-reader.html?url=fixture')).enabled === true, 'Reader can enable global translation');
+  for (const url of ['https://paper.invalid', 'chrome-extension://other/popup.html', 'chrome-extension://test-extension/popup.html.fake', 'chrome-extension://test-extension/unknown.html', 'not-a-url']) {
+    check((await setEnabled(state, false, url)).error.code === 'INVALID_SENDER', 'Untrusted state writer rejected');
+  }
+  check((await state.send({ type: 'SET_PLUGIN_ENABLED', enabled: false }, 1, { url: 'chrome-extension://test-extension/popup.html', frameId: 1 })).error.code === 'INVALID_SENDER', 'Embedded writer rejected');
+  check((await setEnabled(state, 'false')).error.code === 'INVALID_STATE', 'Boolean state required');
+  check((await state.send({ type: 'GET_PLUGIN_STATE' })).enabled, 'Invalid writes preserve state');
+  state.controls.failStateWrite = true;
+  check((await setEnabled(state, false)).error.code === 'STATE_STORAGE', 'Persistence failure reported');
+  check((await state.send({ type: 'GET_PLUGIN_STATE' })).enabled && state.localStorage[PLUGIN_KEY], 'Failed save preserves enabled state');
+  state.controls.failStateWrite = false;
+  const unreadable = harness(); unreadable.controls.failStateRead = true;
+  check((await unreadable.send({ type: 'GET_PLUGIN_STATE' })).error.code === 'STATE_STORAGE', 'State read fails safely');
+  unreadable.controls.failStateRead = false;
+  check((await unreadable.send({ type: 'GET_PLUGIN_STATE' })).enabled, 'State read can recover');
+  const badConfigState = harness({ mode: 'missing-config' });
+  check(!(await badConfigState.send({ type: 'GET_CONFIG_STATUS' })).ok && (await setEnabled(badConfigState, false)).ok && (await setEnabled(badConfigState, true)).ok, 'Config error does not block switch');
+  await state.send({ type: 'TRANSLATE', text: 'cached' });
+  await setEnabled(state, false);
+  check((await state.send({ type: 'TRANSLATE', text: 'cached' })).error.code === 'PLUGIN_DISABLED', 'Cached translation blocked while off');
+  await setEnabled(state, true);
+  check((await state.send({ type: 'TRANSLATE', text: 'cached' })).cached, 'Existing cache retained after enabling');
+
+  const cancelled = harness({ delay: 150 });
+  const requests = [cancelled.send({ type: 'TRANSLATE', text: 'same' }, 1), cancelled.send({ type: 'TRANSLATE', text: 'same' }, 2), cancelled.send({ type: 'TRANSLATE', text: 'other' }, 3)];
+  await waitFor(() => cancelled.stats.apiCalls === 2);
+  await setEnabled(cancelled, false);
+  const results = await Promise.all(requests);
+  check(results.every((r) => r.error?.code === 'PLUGIN_DISABLED'), 'Shared and independent requests cancelled');
+  check(cancelled.stats.aborted === 2 && !cancelled.storage[CACHE_KEY], 'All controllers aborted without caching cancelled results');
+  await setEnabled(cancelled, true); cancelled.controls.delay = 0;
+  check((await cancelled.send({ type: 'TRANSLATE', text: 'same' }, 1)).ok, 'Cancellation releases locks');
+
+  const late = harness({ delay: 120 }); late.controls.ignoreAbort = true;
+  const old = late.send({ type: 'TRANSLATE', text: 'late' });
+  await waitFor(() => late.stats.apiCalls === 1);
+  await setEnabled(late, false); await setEnabled(late, true);
+  late.controls.delay = 180;
+  const fresh = late.send({ type: 'TRANSLATE', text: 'late' });
+  check((await old).error.code === 'PLUGIN_DISABLED', 'Late response rejected after off/on');
+  check((await late.send({ type: 'TRANSLATE', text: 'different' })).error.code === 'BUSY', 'Old finalizer does not release new request lock');
+  check((await fresh).ok && late.stats.apiCalls === 2, 'New request never reuses old pending task');
+
+  const configPending = harness();
+  let releaseConfig;
+  configPending.controls.configGate = new Promise((resolve) => { releaseConfig = resolve; });
+  const beforeConfig = configPending.send({ type: 'TRANSLATE', text: 'pending-config' });
+  await waitFor(() => configPending.stats.configLoads === 1);
+  await setEnabled(configPending, false); releaseConfig();
+  check((await beforeConfig).error.code === 'PLUGIN_DISABLED' && configPending.stats.apiCalls === 0, 'No API call if switched off during config load');
+
+  const cachePending = harness();
+  await cachePending.send({ type: 'TRANSLATE', text: 'pending-cache' });
+  let releaseCache;
+  cachePending.controls.cacheReadGate = new Promise((resolve) => { releaseCache = resolve; });
+  const beforeCache = cachePending.send({ type: 'TRANSLATE', text: 'pending-cache' });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setEnabled(cachePending, false); releaseCache();
+  check((await beforeCache).error.code === 'PLUGIN_DISABLED' && cachePending.stats.apiCalls === 1, 'Cache response suppressed after disabling');
   const report = { suite: 'background-mocked', assertions, status: 'passed', usesRealApi: false };
   fs.writeFileSync(path.join(__dirname, 'background-report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report));

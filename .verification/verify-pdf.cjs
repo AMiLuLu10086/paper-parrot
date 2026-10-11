@@ -18,7 +18,7 @@ async function main() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'literature-pdf-'));
   const extension = path.join(fixture, 'extension');
   fs.mkdirSync(extension);
-  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
+  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
   fs.cpSync(path.join(root, 'vendor'), path.join(extension, 'vendor'), { recursive: true });
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica);
@@ -223,6 +223,23 @@ async function main() {
     });
     await secondReader.keyboard.press('y'); await secondReader.getByRole('button', { name: '复制译文', exact: true }).waitFor();
     check(apiCalls === beforeCrossCache && (await secondReader.locator('#literature-translator-panel .note').textContent()).includes('来自缓存'), 'Cache shared across PDF tabs');
+    await reader.locator('#plugin-toggle').click();
+    await secondReader.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'false');
+    await secondReader.locator('#literature-translator-panel').waitFor({ state: 'detached' });
+    const beforeDisabled = apiCalls;
+    await selectText('Scientific evidence'); await reader.keyboard.press('y');
+    check(apiCalls === beforeDisabled && await panel.count() === 0, 'Global off blocks PDF selection translation and closes other PDF panels');
+    await reader.locator('#next-page').click(); await ready(2);
+    const disabledScale = await reader.locator('#zoom-value').textContent();
+    await reader.locator('#zoom-in').click(); await ready(2);
+    check((await reader.locator('#zoom-value').textContent()) !== disabledScale, 'PDF navigation and zoom remain usable while off');
+    await file(localPdf); await ready();
+    check((await reader.locator('#page-count').textContent()) === '/ 3', 'Opening PDF remains usable while off');
+    await secondReader.locator('#plugin-toggle').click();
+    await reader.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'true');
+    await selectText('Scientific evidence'); await reader.keyboard.press('y'); await translationReady();
+    check((await panel.locator('.note').textContent()).includes('来自缓存'), 'Reenable resumes PDF translation without reload');
+    await reader.keyboard.press('Escape');
     // 未缓存的新选区验证错误与基于原始文字的重试。
     apiMode = '429';
     await reader.locator('#next-page').click(); await ready(2);
@@ -261,7 +278,7 @@ async function main() {
     await oldBrowserReader.getByText('PDF 阅读功能需要 Chrome / Edge 125 或更新版本，请升级浏览器。', { exact: true }).waitFor();
     check(await oldBrowserReader.locator('#open-file').isDisabled(), 'Older browser gets upgrade hint rather than broken renderer');
     await reader.screenshot({ path: path.join(__dirname, 'pdf-reader.png') });
-    await secondReader.getByRole('button', { name: '关闭翻译窗口', exact: true }).click();
+    if (await secondReader.locator('#literature-translator-panel').count()) await secondReader.getByRole('button', { name: '关闭翻译窗口', exact: true }).click();
     await secondReader.screenshot({ path: path.join(__dirname, 'pdf-paper.png') });
     check(pageErrors.length === 0, `No uncaught reader exceptions: ${pageErrors.join('; ')}`);
     const report = { suite: 'pdf-native-mv3', status: 'passed', assertions, checks, pdfjsVersion: '6.4.299', chromiumVersion: context.browser().version(), usesRealApi: false, notes: 'Synthetic single-column, double-column, no-text, encrypted and invalid PDFs. Native Chrome/Edge manual loading remains pending.' };

@@ -34,11 +34,21 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const errors = []; page.on('pageerror', (error) => errors.push(error.message));
     await page.addInitScript((origin) => {
-      globalThis.chrome = { runtime: {
+      let enabled = true;
+      const listeners = [];
+      globalThis.chrome = { storage: { onChanged: { addListener: (handler) => listeners.push(handler) } }, runtime: {
         getURL: (resource) => origin + '/' + resource,
-        sendMessage: async (message) => message.type === 'GET_CONFIG_STATUS'
-          ? { ok: true, model: 'edge-mock', ready: true, maxTextLength: 5000 }
-          : { ok: true, translation: 'Edge 模拟译文：' + message.text, cached: false, incomplete: false },
+        sendMessage: async (message) => {
+          if (message.type === 'GET_PLUGIN_STATE') return { ok: true, enabled };
+          if (message.type === 'SET_PLUGIN_ENABLED') {
+            enabled = message.enabled;
+            for (const handler of listeners) handler({ literaturePluginEnabledV1: { newValue: enabled } }, 'local');
+            return { ok: true, enabled };
+          }
+          return message.type === 'GET_CONFIG_STATUS'
+            ? { ok: true, model: 'edge-mock', ready: true, maxTextLength: 5000 }
+            : { ok: true, translation: 'Edge 模拟译文：' + message.text, cached: false, incomplete: false };
+        },
       } };
     }, origin);
     await page.goto(origin + '/pdf-reader.html');
@@ -58,6 +68,19 @@ async function main() {
     await page.locator('#next-page').click();
     await page.waitForFunction(() => document.querySelector('#page-number').value === '2' && document.querySelector('#reader-status').dataset.state === 'ready');
     check(await page.locator('.page[data-page-number="2"] .textLayer span').filter({ hasText: 'Second scientific page' }).count() === 1, 'Edge second page renders');
+    await page.locator('#plugin-toggle').click();
+    check(await page.locator('#plugin-toggle').getAttribute('aria-checked') === 'false', 'Edge switch disables translation');
+    await page.locator('.page[data-page-number="2"] .textLayer span').first().evaluate((element) => {
+      document.activeElement?.blur(); const range = document.createRange(); range.selectNodeContents(element);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    });
+    await page.keyboard.press('y');
+    check(await page.locator('#literature-translator-panel').count() === 0, 'Edge off state ignores Y');
+    await page.locator('#previous-page').click();
+    await page.waitForFunction(() => document.getElementById('page-number').value === '1');
+    check(await page.locator('#zoom-in').isEnabled(), 'Edge PDF navigation stays enabled');
+    await page.locator('#plugin-toggle').focus(); await page.keyboard.press('Space');
+    check(await page.locator('#plugin-toggle').getAttribute('aria-checked') === 'true', 'Edge switch supports keyboard');
     await page.screenshot({ path: path.join(__dirname, 'edge-pdf-reader.png') });
     check(errors.length === 0, `Edge has no uncaught exceptions: ${errors.join('; ')}`);
     const report = { suite: 'edge-reader-runtime', status: 'passed', assertions: checks.length, checks, edgeVersion: browser.version(), usesRealApi: false, notes: 'Real Microsoft Edge engine, HTTP-hosted reader, mocked chrome.runtime. NOT a native Edge extension installation test.' };

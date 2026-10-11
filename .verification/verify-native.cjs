@@ -14,7 +14,7 @@ async function main() {
   const extension = path.join(fixture, 'extension');
   fs.mkdirSync(extension);
   // 不复制用户 config.json，避免将未来填写的真实密钥带入临时测试目录。
-  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
+  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
   fs.cpSync(path.join(root, 'vendor'), path.join(extension, 'vendor'), { recursive: true });
   let apiCalls = 0;
   let apiMode = 'success';
@@ -139,8 +139,76 @@ async function main() {
     await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
     check(apiCalls === beforeFakeClick + 1, 'Native retry uses saved selection');
 
+    const toggle = popup.getByRole('switch', { name: '启用翻译', exact: true });
+    await toggle.waitFor();
+    check(await toggle.getAttribute('aria-checked') === 'true', 'Native switch defaults on');
+    const reader = await context.newPage();
+    await reader.goto(`chrome-extension://${extensionId}/pdf-reader.html`);
+    await reader.locator('html[data-reader-ready="true"]').waitFor();
+    const readerToggle = reader.getByRole('switch', { name: '启用翻译', exact: true });
+    await toggle.click();
+    await reader.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'false');
+    await panel.waitFor({ state: 'detached' });
+    await secondPage.locator('#literature-translator-panel').waitFor({ state: 'detached' });
+    check(await readerToggle.getAttribute('aria-checked') === 'false', 'Popup change synchronizes PDF control and hides all panels');
+    const beforeOff = apiCalls;
+    await page.evaluate(() => {
+      window.observedY = 0;
+      document.addEventListener('keydown', (event) => { if (event.key === 'y' && !event.defaultPrevented) window.observedY++; });
+    });
+    await select('#original'); await page.keyboard.press('y');
+    await page.waitForTimeout(100);
+    check(await panel.count() === 0 && apiCalls === beforeOff && await page.evaluate(() => window.observedY) === 1, 'Off state neither translates nor intercepts Y');
+    const thirdPage = await context.newPage(); await thirdPage.goto(origin); await thirdPage.waitForLoadState('networkidle');
+    await thirdPage.locator('#original').evaluate((element) => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    });
+    await thirdPage.keyboard.press('y');
+    check(await thirdPage.locator('#literature-translator-panel').count() === 0 && apiCalls === beforeOff, 'New page initializes disabled');
+    await popup.reload();
+    await popup.waitForFunction(() => !document.getElementById('plugin-toggle').disabled);
+    check(await toggle.getAttribute('aria-checked') === 'false', 'Popup reopen remembers disabled state');
+    await readerToggle.focus(); await reader.keyboard.press('Space');
+    await popup.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'true');
+    await select('#original'); await page.keyboard.press('y');
+    await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
+    check(await toggle.getAttribute('aria-checked') === 'true', 'Keyboard reader switch enables existing web pages without reload');
+    await page.keyboard.press('Escape');
+
+    apiDelay = 1000;
+    await page.evaluate(() => { document.getElementById('original').textContent = 'Cancel this request while it is waiting.'; });
+    await select('#original'); const beforeCancel = apiCalls; await page.keyboard.press('y');
+    for (let i = 0; apiCalls === beforeCancel && i < 100; i++) await page.waitForTimeout(10);
+    check(apiCalls === beforeCancel + 1, 'Request started before cancellation');
+    await toggle.click(); await panel.waitFor({ state: 'detached' });
+    await toggle.click();
+    apiDelay = 200;
+    await popup.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'true' && !document.getElementById('plugin-toggle').disabled);
+    await page.evaluate(() => { document.getElementById('original').textContent = 'A fresh request after enabling translation.'; });
+    await select('#original'); await page.keyboard.press('y');
+    await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
+    await page.waitForTimeout(1100);
+    check(apiCalls === beforeCancel + 2 && await panel.count() === 1, 'Quick off/on permits a fresh request and ignores old response');
+
+    // Persistence across browser restart uses the same isolated profile only.
     await page.screenshot({ path: path.join(__dirname, 'native-extension.png') });
-    await popup.screenshot({ path: path.join(__dirname, 'native-popup.png') });
+    await popup.locator('body').screenshot({ path: path.join(__dirname, 'native-popup.png') });
+    await reader.setViewportSize({ width: 390, height: 844 });
+    await reader.screenshot({ path: path.join(__dirname, 'ios-reader-narrow.png') });
+    check(await reader.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Reader controls fit narrow viewport');
+    await toggle.click();
+    await popup.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'false' && !document.getElementById('plugin-toggle').disabled);
+    await context.close(); context = null;
+    context = await chromium.launchPersistentContext(path.join(fixture, 'profile'), {
+      channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    const restartedPopup = await context.newPage();
+    await restartedPopup.goto(`chrome-extension://${extensionId}/popup.html`);
+    await restartedPopup.waitForFunction(() => !document.getElementById('plugin-toggle').disabled);
+    check(await restartedPopup.locator('#plugin-toggle').getAttribute('aria-checked') === 'false', 'Native browser restart retains off state');
+
     check(!pageErrors.length, 'No page exceptions');
     const report = { suite: 'native-chromium-mv3', status: 'passed', assertions: checks, chromiumVersion: context.browser().version(), usesRealApi: false, notes: 'Tested unpacked MV3 in isolated Chromium. Branded Chrome and Edge developer-mode loading remains manual.' };
     fs.writeFileSync(path.join(__dirname, 'native-report.json'), JSON.stringify(report, null, 2) + '\n');

@@ -11,6 +11,12 @@
 (() => {
   let inProgress = false;
   let currentPanel = null;
+  let pluginEnabled = false;
+  let stateRevision = 0;
+  let requestEpoch = 0;
+  let activeRequest;
+  let configStatusPromise;
+  const PLUGIN_STORAGE_KEY = "literaturePluginEnabledV1";
   const isPdfReader = location.protocol === "chrome-extension:" &&
     location.href.split(/[?#]/u)[0] === chrome.runtime.getURL("pdf-reader.html");
 
@@ -69,26 +75,26 @@
       :host { color-scheme: light; }
       *, *::before, *::after { box-sizing: border-box; }
       .panel { width: min(420px, calc(100vw - 32px)); background: #ffffff;
-        color: #24334a; border: 1px solid #cbd5e1; border-top: 3px solid #335f86;
-        border-radius: 12px; box-shadow: 0 12px 40px rgba(20, 39, 61, .18);
-        font: 14px/1.75 "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; }
+        color: #1c1c1e; border: 1px solid rgba(60,60,67,.12);
+        border-radius: 20px; box-shadow: 0 16px 48px rgba(0,0,0,.16);
+        font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; }
       .header { display: flex; align-items: center; justify-content: space-between;
-        padding: 12px 16px 8px; gap: 12px; }
-      .title { font-weight: 650; font-size: 14px; letter-spacing: .03em; }
-      button { font: inherit; cursor: pointer; border-radius: 6px; }
-      button:focus-visible { outline: 2px solid #335f86; outline-offset: 3px; }
+        padding: 16px 20px 12px; gap: 12px; }
+      .title { font-weight: 650; font-size: 16px; letter-spacing: -.02em; }
+      button { font: inherit; cursor: pointer; border-radius: 10px; min-height: 36px; }
+      button:focus-visible { outline: 2px solid #007aff; outline-offset: 3px; }
       button:disabled { cursor: wait; opacity: .65; }
-      .close { border: none; background: transparent; color: #52647a; font-size: 12px; padding: 4px 6px; }
-      .close:hover { background: #edf2f7; }
-      .text { padding: 0 16px 12px; max-height: min(50vh, 400px); overflow-y: auto;
+      .close { border: none; background: #f2f2f7; color: #636366; font-size: 12px; padding: 4px 10px; }
+      .close:hover { background: #e5e5ea; }
+      .text { padding: 0 20px 18px; max-height: min(50vh, 400px); overflow-y: auto;
         white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
-      .text[data-state="error"] { color: #9b3535; }
-      .footer { padding: 10px 16px 14px; border-top: 1px solid #edf2f7; }
-      .note { color: #65748a; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .text[data-state="error"] { color: #b42318; }
+      .footer { padding: 12px 20px 16px; border-top: 1px solid #e5e5ea; }
+      .note { color: #636366; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
       .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
       .actions:empty { display: none; }
-      .action { padding: 5px 10px; color: #2c557a; background: #eef4f9; border: 1px solid #cfdfed; }
-      .action:hover { background: #e0edf7; }
+      .action { padding: 6px 14px; color: #007aff; background: #eef5ff; border: none; }
+      .action:hover { background: #dcecff; }
     `;
     const section = document.createElement("section");
     section.className = "panel";
@@ -160,33 +166,75 @@
     panel.actions.append(copyButton);
   }
 
-  const configStatusPromise = sendMessage({ type: "GET_CONFIG_STATUS" });
-  // 提前处理拒绝，避免在用户按 Y 之前出现未捕获的 Promise rejection。
-  configStatusPromise.catch((error) => {
-    if (!inProgress) showError(createPanel(), error);
+  function getConfigStatus() {
+    configStatusPromise ??= sendMessage({ type: "GET_CONFIG_STATUS" });
+    return configStatusPromise;
+  }
+
+  function applyPluginState(enabled) {
+    if (pluginEnabled === enabled) return;
+    pluginEnabled = enabled;
+    requestEpoch++;
+    if (!enabled) {
+      closePanel();
+      activeRequest = undefined;
+      inProgress = false;
+    } else {
+      const epoch = requestEpoch;
+      // Configuration failures must never open a panel while disabled or after a stale read.
+      void getConfigStatus().catch((error) => {
+        if (pluginEnabled && epoch === requestEpoch && !inProgress) showError(createPanel(), error);
+      });
+    }
+  }
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !(PLUGIN_STORAGE_KEY in changes)) return;
+    stateRevision++;
+    applyPluginState(changes[PLUGIN_STORAGE_KEY].newValue !== false);
+  });
+
+  const initialRevision = stateRevision;
+  void sendMessage({ type: "GET_PLUGIN_STATE" }).then((state) => {
+    if (typeof state.enabled !== "boolean") throw COMMUNICATION_ERROR;
+    if (initialRevision === stateRevision) applyPluginState(state.enabled);
+  }).catch(() => {
+    // Keep shortcuts untouched if the initial state cannot be read; the popup explains recovery.
   });
 
   async function runTranslation(text) {
-    if (inProgress) return;
+    if (!pluginEnabled || inProgress) return;
     inProgress = true; // 在首次 await 前同步加锁，长按与快速重复按键均不会重发。
+    const token = {};
+    const epoch = requestEpoch;
+    activeRequest = token;
+    const stillCurrent = () => pluginEnabled && epoch === requestEpoch && activeRequest === token;
     let panel;
     try {
       panel = createPanel();
       panel.text.dataset.state = "loading";
       panel.text.textContent = "翻译请求中，请稍候...";
-      panel.note.textContent = "关闭窗口只隐藏结果，不会取消正在执行的请求。";
-      const status = await configStatusPromise;
+      panel.note.textContent = "Esc 隐藏译文；关闭全局翻译开关可取消请求。";
+      const state = await sendMessage({ type: "GET_PLUGIN_STATE" });
+      if (!state.enabled || !stillCurrent()) { closePanelIfCurrent(); return; }
+      const status = await getConfigStatus();
+      if (!stillCurrent()) return;
       if (text.length > status.maxTextLength) {
         throw { code: "TEXT_TOO_LONG", message: `选中文字共 ${text.length} 字符，超过上限 ${status.maxTextLength}。请分段选择，不会自动截断或发送请求。`, retryable: false };
       }
       const result = await sendMessage({ type: "TRANSLATE", text });
+      if (!stillCurrent()) return;
       if (typeof result.translation !== "string") throw COMMUNICATION_ERROR;
+      const latest = await sendMessage({ type: "GET_PLUGIN_STATE" });
+      if (!latest.enabled || !stillCurrent()) { closePanelIfCurrent(); return; }
       if (panelVisible(panel)) showResult(panel, result);
     } catch (error) {
-      if (panel && panelVisible(panel)) showError(panel, error, text);
+      if (error?.code === "PLUGIN_DISABLED") closePanelIfCurrent();
+      else if (stillCurrent() && panel && panelVisible(panel)) showError(panel, error, text);
     } finally {
-      inProgress = false;
+      if (activeRequest === token) { activeRequest = undefined; inProgress = false; }
     }
+    function closePanelIfCurrent() { if (panel && currentPanel === panel) closePanel(); }
   }
 
   function isEditableElement(element) {
@@ -214,6 +262,7 @@
   document.addEventListener("keydown", (event) => {
     // 只接受真实用户按键，阻止网页伪造 Y 来触发模型调用。
     if (!event.isTrusted || event.isComposing || editingTarget(event)) return;
+    if (!pluginEnabled) return;
     if (event.key === "Escape" && currentPanel?.host.isConnected) {
       event.preventDefault();
       event.stopImmediatePropagation();

@@ -6,14 +6,26 @@
     <title>PDF 阅读 · 文献译读</title>
     <!-- MV3：脚本、worker、字体与样式均来自本扩展，不使用 CDN 或内联脚本。 -->
     <link rel="stylesheet" href="vendor/pdfjs/web/pdf_viewer.css">
+    <link rel="stylesheet" href="ui.css">
     <link rel="stylesheet" href="pdf-reader.css">
     <script src="content.js" defer></script>
+    <script src="plugin-control.js" defer></script>
     <script src="pdf-reader.js" type="module"></script>
   </head>
   <body>
     <header class="reader-header">
       <div class="identity"><strong>文献译读</strong><span>PDF 阅读</span></div>
       <p class="shortcut">选中文字按 <kbd>Y</kbd> 翻译 · <kbd>Esc</kbd> 关闭译文</p>
+      <div class="reader-toggle">
+        <div class="toggle-row">
+          <span id="plugin-toggle-title" class="toggle-title">启用翻译</span>
+          <div class="toggle-meta">
+            <span id="plugin-state-label" aria-live="polite">读取中…</span>
+            <button id="plugin-toggle" class="ios-switch" type="button" role="switch" aria-checked="false" aria-labelledby="plugin-toggle-title" disabled></button>
+          </div>
+        </div>
+        <p id="plugin-status" role="status" aria-live="polite"></p>
+      </div>
       <button id="open-file" type="button" disabled>打开本地 PDF</button>
       <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
     </header>

@@ -15,7 +15,7 @@
  * 本版本改用扩展后台 fetch，并声明主机权限，无需临时 CORS 插件或中转服务。
  * 广泛 HTTP/HTTPS 权限用于仅编辑 config.json 切换服务；分享版应收缩权限。
  *
- * JSON 不支持注释：manifest.json 的 storage 用于内存快照和缓存，
+ * JSON 不支持注释：manifest.json 的 storage 用于会话快照、缓存和本地开关状态，
  * minimum_chrome_version 为 storage.session 的最低版本，content script 只注入顶层 HTML。
  */
 
@@ -24,12 +24,99 @@ const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_CACHE_CHARACTERS = 500_000;
 const CONFIG_STORAGE_KEY = "literatureConfigSnapshotV1";
 const CACHE_STORAGE_KEY = "literatureTranslationsV1";
+const PLUGIN_STORAGE_KEY = "literaturePluginEnabledV1";
 const CONFIG_LOAD_MESSAGE = "无法加载本地配置文件，请检查项目根目录config.json是否存在。";
 
 let configPromise;
 let cacheQueue = Promise.resolve();
-const activeTabs = new Set();
+const activeTabs = new Map();
 const pendingTranslations = new Map();
+const requestControllers = new Set();
+let pluginEnabled;
+let pluginStatePromise;
+let stateQueue = Promise.resolve();
+let translationEpoch = 0;
+
+function applyPluginState(enabled) {
+  if (pluginEnabled === enabled) return;
+  pluginEnabled = enabled;
+  translationEpoch++;
+  if (!enabled) {
+    for (const controller of requestControllers) controller.abort();
+    // Old tasks release only their own locks; a newly enabled request can start immediately.
+    activeTabs.clear();
+    pendingTranslations.clear();
+  }
+}
+
+async function loadPluginState() {
+  try {
+    const epoch = translationEpoch;
+    const stored = await chrome.storage.local.get(PLUGIN_STORAGE_KEY);
+    if (epoch === translationEpoch) applyPluginState(stored[PLUGIN_STORAGE_KEY] !== false);
+  } catch {
+    throw new ExtensionError("STATE_STORAGE", "无法读取翻译开关，请重新打开插件后重试。");
+  }
+}
+
+async function ensurePluginState() {
+  pluginStatePromise ??= loadPluginState().catch((error) => {
+    pluginStatePromise = undefined;
+    throw error;
+  });
+  await pluginStatePromise;
+}
+
+function queueStateOperation(operation) {
+  const task = stateQueue.then(operation);
+  stateQueue = task.catch(() => undefined);
+  return task;
+}
+
+function getPluginState() {
+  return queueStateOperation(async () => {
+    await ensurePluginState();
+    return { enabled: pluginEnabled };
+  });
+}
+
+function setPluginEnabled(message, sender) {
+  return queueStateOperation(async () => {
+    let source;
+    try { source = new URL(sender.url); } catch { /* Reject missing or malformed senders. */ }
+    const allowed = ["popup.html", "pdf-reader.html"].some((page) => {
+      const target = new URL(chrome.runtime.getURL(page));
+      return source?.origin === target.origin && source?.protocol === target.protocol &&
+        source?.host === target.host && source?.pathname === target.pathname;
+    });
+    if (!allowed || (sender.frameId !== undefined && sender.frameId !== 0)) {
+      throw new ExtensionError("INVALID_SENDER", "只能在插件控制面板或 PDF 阅读器中修改翻译开关。");
+    }
+    if (typeof message.enabled !== "boolean") {
+      throw new ExtensionError("INVALID_STATE", "翻译开关必须为开启或关闭。");
+    }
+    await ensurePluginState();
+    try {
+      await chrome.storage.local.set({ [PLUGIN_STORAGE_KEY]: message.enabled });
+    } catch {
+      throw new ExtensionError("STATE_STORAGE", "开关保存失败，已保留原状态，请重试。");
+    }
+    applyPluginState(message.enabled);
+    return { enabled: pluginEnabled };
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && PLUGIN_STORAGE_KEY in changes) {
+    applyPluginState(changes[PLUGIN_STORAGE_KEY].newValue !== false);
+  }
+});
+
+function assertTranslationEnabled(epoch) {
+  if (!pluginEnabled || epoch !== translationEpoch) {
+    throw new ExtensionError("PLUGIN_DISABLED", "翻译已停用，本次请求已取消。");
+  }
+}
 
 class ExtensionError extends Error {
   constructor(code, message, retryable = false) {
@@ -191,11 +278,13 @@ async function readCachedTranslation(key, config) {
   });
 }
 
-async function saveCachedTranslation(key, text, translation, config) {
+async function saveCachedTranslation(key, text, translation, config, epoch) {
   if (text.length + translation.length > MAX_CACHE_CHARACTERS) return;
   await queueCacheOperation(async () => {
     try {
+      assertTranslationEnabled(epoch);
       const stored = await chrome.storage.session.get(CACHE_STORAGE_KEY);
+      assertTranslationEnabled(epoch);
       const entries = trimCache(stored[CACHE_STORAGE_KEY], config).filter((entry) => entry.key !== key);
       entries.push({ key, text, translation });
       await chrome.storage.session.set({ [CACHE_STORAGE_KEY]: trimCache(entries, config) });
@@ -237,8 +326,10 @@ function httpError(status, payload, config) {
   return new ExtensionError(`HTTP_${status}`, `接口请求失败（${status}），请检查模型和参数。${suffix}`);
 }
 
-async function requestTranslation(text, config) {
+async function requestTranslation(text, config, epoch) {
+  assertTranslationEnabled(epoch);
   const controller = new AbortController();
+  requestControllers.add(controller);
   // 非流式请求采用保守的 25 秒总时限。不要直接改成大于 30 秒：
   // MV3 后台还有 fetch 等待及空闲终止规则，后续需配合流式和消息生命周期设计。
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -263,6 +354,7 @@ async function requestTranslation(text, config) {
     });
     // 先读正文再解析：非 JSON 错误页仍按 HTTP 状态给出正确建议。
     const body = await response.text();
+    assertTranslationEnabled(epoch);
     let payload;
     try {
       payload = JSON.parse(body);
@@ -280,6 +372,7 @@ async function requestTranslation(text, config) {
     }
     return { translation: choice.message.content.trim(), cached: false, incomplete: choice.finish_reason === "length" };
   } catch (error) {
+    assertTranslationEnabled(epoch);
     if (controller.signal.aborted) {
       throw new ExtensionError("TIMEOUT", "翻译请求超过 25 秒，请缩短选区或稍后手动重试。中止本地等待不保证服务端停止生成或计费。", true);
     }
@@ -287,6 +380,7 @@ async function requestTranslation(text, config) {
     throw new ExtensionError("NETWORK_ERROR", "网络请求失败，请检查网络、接口地址和扩展主机权限，然后手动重试。", true);
   } finally {
     clearTimeout(timer);
+    requestControllers.delete(controller);
   }
 }
 
@@ -306,11 +400,16 @@ async function translate(message, sender) {
   if (typeof message.text !== "string" || !message.text.trim()) {
     throw new ExtensionError("EMPTY_SELECTION", "请先选择需要翻译的文字。");
   }
+  await getPluginState();
+  const epoch = translationEpoch;
+  assertTranslationEnabled(epoch);
   const tabId = sender.tab.id;
   if (activeTabs.has(tabId)) throw new ExtensionError("BUSY", "当前网页已有翻译请求，请等待完成。");
-  activeTabs.add(tabId);
+  const token = {};
+  activeTabs.set(tabId, token);
   try {
     const config = await getConfig();
+    assertTranslationEnabled(epoch);
     const text = message.text.trim();
     if (text.length > config.maxTextLength) {
       throw new ExtensionError("TEXT_TOO_LONG", `选中文字共 ${text.length} 字符，超过上限 ${config.maxTextLength}。请分段选择，不会自动截断或发送请求。`);
@@ -319,32 +418,46 @@ async function translate(message, sender) {
       throw new ExtensionError("CONFIG_REQUIRED", "请先在项目根目录 config.json 填写实际 model、baseUrl 和 apiKey，再重新加载扩展并刷新网页。");
     }
     const key = await translationKey(text, config);
+    assertTranslationEnabled(epoch);
     const cached = await readCachedTranslation(key, config);
+    assertTranslationEnabled(epoch);
     if (cached !== null) return { translation: cached, cached: true, incomplete: false };
 
     // 不同标签页同时翻译完全相同的原文时共享正在执行的请求，避免重复付费。
-    if (pendingTranslations.has(key)) return await pendingTranslations.get(key);
+    if (pendingTranslations.has(key)) {
+      const result = await pendingTranslations.get(key);
+      assertTranslationEnabled(epoch);
+      return result;
+    }
     const task = (async () => {
-      const result = await requestTranslation(text, config);
-      if (!result.incomplete) await saveCachedTranslation(key, text, result.translation, config);
+      const result = await requestTranslation(text, config, epoch);
+      assertTranslationEnabled(epoch);
+      if (!result.incomplete) await saveCachedTranslation(key, text, result.translation, config, epoch);
+      assertTranslationEnabled(epoch);
       return result;
     })();
     pendingTranslations.set(key, task);
     try {
       return await task;
     } finally {
-      pendingTranslations.delete(key);
+      if (pendingTranslations.get(key) === task) pendingTranslations.delete(key);
     }
   } finally {
-    activeTabs.delete(tabId);
+    if (activeTabs.get(tabId) === token) activeTabs.delete(tabId);
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || !message || !["GET_CONFIG_STATUS", "TRANSLATE"].includes(message.type)) return false;
-  const task = message.type === "GET_CONFIG_STATUS"
-    ? getConfig().then((config) => ({ model: config.model, maxTextLength: config.maxTextLength, ready: isConfigured(config) }))
-    : translate(message, sender);
+  if (sender.id !== chrome.runtime.id || !message || !["GET_CONFIG_STATUS", "TRANSLATE", "GET_PLUGIN_STATE", "SET_PLUGIN_ENABLED"].includes(message.type)) return false;
+  let task;
+  switch (message.type) {
+    case "GET_PLUGIN_STATE": task = getPluginState(); break;
+    case "SET_PLUGIN_ENABLED": task = setPluginEnabled(message, sender); break;
+    case "GET_CONFIG_STATUS":
+      task = getConfig().then((config) => ({ model: config.model, maxTextLength: config.maxTextLength, ready: isConfigured(config) }));
+      break;
+    default: task = translate(message, sender);
+  }
   void task.then(
     (result) => sendResponse({ ok: true, ...result }),
     (error) => sendResponse({ ok: false, error: publicError(error) }),
