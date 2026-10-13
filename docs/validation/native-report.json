@@ -1,0 +1,8 @@
+{
+  "suite": "native-chromium-mv3",
+  "status": "passed",
+  "assertions": 33,
+  "chromiumVersion": "151.0.7922.34",
+  "usesRealApi": false,
+  "notes": "Tested unpacked MV3 in isolated Chromium. Branded Chrome and Edge developer-mode loading remains manual."
+}

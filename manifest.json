@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "文献译读 · Literature Translator",
+  "name": "paper-parrot",
   "version": "1.1.0",
   "description": "选中网页或插件 PDF 阅读页中的英文文字后按 Y 翻译。适用于 Chrome 和 Microsoft Edge。",
   "minimum_chrome_version": "102",
@@ -13,7 +13,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "文献译读：选中文字后按 Y",
+    "default_title": "paper-parrot：选中文字后按 Y",
     "default_popup": "popup.html"
   },
   "content_scripts": [

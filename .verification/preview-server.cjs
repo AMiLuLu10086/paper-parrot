@@ -55,10 +55,10 @@ const bridge = `<script>
   }, 300);
 </script>`;
 
-const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>文献译读本地验证</title>
+const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>paper-parrot 本地验证</title>
 <style>body { margin: 48px; background: #f5f8fb; color: #24334a; font: 15px/1.7 'Segoe UI','Microsoft YaHei',sans-serif; max-width: 750px; } button { padding: 7px 12px; margin: 5px; } input,textarea,[contenteditable] { display:block; margin:10px 0; padding:8px; } #long { height:48px; overflow:auto; overflow-wrap:anywhere; } .controls { margin:20px 0; } </style>
 ${bridge}<script src="/content.js" defer></script></head><body>
-<h1>文献译读 · 本地模拟验证</h1><p>此页面只使用模拟模型响应，不发送真实 API 请求。</p>
+<h1>paper-parrot · 本地模拟验证</h1><p>此页面只使用模拟模型响应，不发送真实 API 请求。</p>
 <p id="original">Scientific translation preserves terminology, citations, and mathematical notation.</p>
 <button onclick="selectOriginal()">选择示例原文</button><button onclick="selectLong()">选择超长原文</button><button onclick="clearSelection()">清除选区</button>
 <div class="controls"><button onclick="control('success')">正常响应</button><button onclick="control('slow')">模拟慢响应</button><button onclick="control(429)">模拟限流</button><button onclick="control('network')">模拟断网</button><button onclick="control('communication')">模拟通信失效</button><button onclick="control('incomplete')">模拟截断</button><button onclick="control('markup')">模拟 HTML 译文</button><button onclick="control('copy-failure')">模拟复制失败</button><button onclick="control('reset')">重置缓存</button></div>

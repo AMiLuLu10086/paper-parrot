@@ -1,0 +1,6 @@
+{
+  "suite": "background-mocked",
+  "assertions": 161,
+  "status": "passed",
+  "usesRealApi": false
+}

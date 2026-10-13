@@ -1,0 +1,20 @@
+{
+  "suite": "edge-reader-runtime",
+  "status": "passed",
+  "assertions": 10,
+  "checks": [
+    "Edge renders PDF text layer",
+    "Edge Y selection translation UI works with mock backend",
+    "Edge closes translation panel",
+    "Edge zoom works",
+    "Edge second page renders",
+    "Edge switch disables translation",
+    "Edge off state ignores Y",
+    "Edge PDF navigation stays enabled",
+    "Edge switch supports keyboard",
+    "Edge has no uncaught exceptions: "
+  ],
+  "edgeVersion": "152.0.4191.53",
+  "usesRealApi": false,
+  "notes": "Real Microsoft Edge engine, HTTP-hosted reader, mocked chrome.runtime. NOT a native Edge extension installation test."
+}

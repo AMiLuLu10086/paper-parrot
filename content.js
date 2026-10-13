@@ -104,7 +104,7 @@
     header.className = "header";
     const title = document.createElement("span");
     title.className = "title";
-    title.textContent = "文献译读";
+    title.textContent = "paper-parrot";
     const closeButton = makeButton("关闭 ×", "close", () => closePanel());
     closeButton.setAttribute("aria-label", "关闭翻译窗口");
     header.append(title, closeButton);

@@ -1,0 +1,27 @@
+{
+  "suite": "ios-ui-native-mv3",
+  "status": "passed",
+  "assertions": 19,
+  "checks": [
+    "Long model name fully preserved",
+    "Long model wraps without horizontal overflow",
+    "Save failure preserves state and allows retry",
+    "Reduced motion disables switch animation",
+    "Switch has visible keyboard focus",
+    "Space toggles off",
+    "Keyboard focus survives asynchronous persistence",
+    "Enter toggles on",
+    "Long translation scrolls inside panel",
+    "Result uses iOS rounded card",
+    "Long translation stays within narrow viewport",
+    "Copy succeeds or gives manual-copy recovery",
+    "Error panel retains retry and readable error",
+    "Disabled initialization suppresses broken-config panel",
+    "Broken config does not block reading switch state",
+    "Broken config does not block enabling",
+    "Broken config does not block disabling and hiding errors",
+    "Broken translation config leaves reader functional",
+    "All UI scenarios have no uncaught exceptions"
+  ],
+  "usesRealApi": false
+}
