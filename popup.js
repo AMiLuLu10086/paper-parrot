@@ -11,32 +11,19 @@
  * 修改 config.json 后先在扩展管理页重新加载扩展，再刷新目标网页，无热更新。
  */
 
-// activeTab 只用于用户主动打开插件时读取当前网址；不需要 tabs / 历史权限。
-for (const [id, useCurrent] of [["open-pdf", false], ["open-current-pdf", true]]) {
-  const button = document.getElementById(id);
-  button.addEventListener("click", async (event) => {
-    if (!event.isTrusted || button.disabled) return;
-    button.disabled = true;
-    const notice = document.getElementById("pdf-status");
-    notice.textContent = "";
-    try {
-      const reader = new URL(chrome.runtime.getURL("pdf-reader.html"));
-      if (useCurrent) {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.url || !/^https?:\/\//u.test(tab.url)) {
-          notice.textContent = "当前地址不能直接加载。请点“打开 PDF 阅读器”，选择本地文件或粘贴在线链接。";
-          return;
-        }
-        // 使用 URLSearchParams 编码，包括没有 .pdf 后缀及含签名参数的在线地址。
-        reader.searchParams.set("url", tab.url);
-      }
-      await chrome.tabs.create({ url: reader.href });
-      window.close();
-    } catch {
-      notice.textContent = "无法打开阅读器，请在扩展管理页重新加载插件后重试。";
-    } finally { button.disabled = false; }
-  });
-}
+const openPdfButton = document.getElementById("open-pdf");
+openPdfButton.addEventListener("click", async (event) => {
+  if (!event.isTrusted || openPdfButton.disabled) return;
+  openPdfButton.disabled = true;
+  const notice = document.getElementById("pdf-status");
+  notice.textContent = "";
+  try {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("pdf-reader.html") });
+    window.close();
+  } catch {
+    notice.textContent = "无法打开阅读器，请在扩展管理页重新加载插件后重试。";
+  } finally { openPdfButton.disabled = false; }
+});
 
 (async () => {
   const modelName = document.getElementById("model-name");

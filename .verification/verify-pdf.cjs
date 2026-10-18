@@ -1,4 +1,4 @@
-// 真实 MV3 + 本地合成 PDF + 无 CORS 模拟服务。不读取或复制用户 config.json。
+// 真实 MV3 + 本地合成 PDF + 模拟翻译服务。不读取或复制用户 config.json。
 // 使用独立 Chromium 临时配置，不修改日常 Chrome / Edge，不自动删除文件。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -18,7 +18,7 @@ async function main() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'literature-pdf-'));
   const extension = path.join(fixture, 'extension');
   fs.mkdirSync(extension);
-  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
+  for (const name of ['manifest.json', 'background.js', 'shortcut.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
   fs.cpSync(path.join(root, 'vendor'), path.join(extension, 'vendor'), { recursive: true });
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica);
@@ -63,14 +63,6 @@ async function main() {
       else response.end(JSON.stringify({ choices: [{ message: { content: 'PDF 科研译文：' + lastText }, finish_reason: 'stop' }] }));
       return;
     }
-    if (request.url.startsWith('/download') || request.url === '/paper.pdf') {
-      // 不设置 CORS 响应头；扩展页通过现有 host_permissions 获取公开在线 PDF。
-      response.setHeader('Content-Type', 'application/pdf');
-      response.setHeader('Content-Length', bytes.length);
-      response.end(bytes); return;
-    }
-    if (request.url === '/blocked') { response.writeHead(403); response.end('Forbidden'); return; }
-    if (request.url === '/not-pdf') { response.end('<html>Login page</html>'); return; }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.end('<html><body><p id="source">Ordinary HTML translation still works.</p></body></html>');
   });
@@ -90,6 +82,8 @@ async function main() {
     await reader.locator('html[data-reader-ready="true"]').waitFor();
     check(await reader.locator('#empty-state').isVisible(), 'Empty reader explains how to open a file');
     check(await reader.locator('#previous-page').isDisabled(), 'Navigation disabled without PDF');
+    check(await reader.locator('input[type="url"], #load-url').count() === 0, 'Reader has no online PDF controls');
+    check((await reader.locator('.reading-area').boundingBox()).y <= 85, 'Desktop reading controls occupy at most 85 pixels');
     async function file(filePath) {
       await reader.locator('#file-input').setInputFiles(filePath);
     }
@@ -112,6 +106,7 @@ async function main() {
     await file(localPdf); await ready();
     check((await reader.locator('#document-name').textContent()) === 'research.pdf', 'Local file opens without file URL permissions');
     check((await reader.locator('#page-count').textContent()) === '/ 3', 'Multi-page count displayed');
+    check(await reader.locator('#zoom-value').textContent() === '100%', 'New PDF opens at 100 percent');
     check(await reader.locator('.page[data-page-number="1"] canvas').count() === 1, 'First page rendered as canvas with selectable text layer');
     check(await reader.locator('.page[data-page-number="3"] canvas').count() === 0, 'Offscreen page not eagerly rendered');
     await reader.keyboard.press('y');
@@ -130,9 +125,8 @@ async function main() {
     check(apiCalls === 1 && (await panel.locator('.note').textContent()).includes('来自缓存'), 'PDF cache hit');
     await reader.keyboard.press('Escape');
     await selectText('Scientific evidence');
-    await reader.locator('#pdf-url').focus(); await reader.keyboard.press('y');
-    check((await reader.locator('#pdf-url').inputValue()) === 'y' && apiCalls === 1, 'URL input accepts Y without translating');
-    await reader.locator('#pdf-url').fill('');
+    await reader.locator('#page-number').focus(); await reader.keyboard.press('y');
+    check(apiCalls === 1 && await panel.count() === 0, 'Page input does not trigger translation');
     await reader.locator('#document-name').evaluate((element) => {
       document.activeElement?.blur(); const range = document.createRange(); range.selectNodeContents(element);
       window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
@@ -143,13 +137,23 @@ async function main() {
     await panel.locator('.text[data-state="error"]').waitFor();
     check(apiCalls === 1 && (await panel.locator('.text').textContent()).includes('超过上限'), 'Long PDF text blocked before API');
     await reader.keyboard.press('Escape');
+    await selectText('Scientific evidence'); await reader.keyboard.press('y'); await translationReady();
+    const visibleTranslation = await panel.locator('.text').textContent();
     const beforeScale = await reader.locator('#zoom-value').textContent();
     await reader.locator('#zoom-in').click();
     check((await reader.locator('#zoom-value').textContent()) !== beforeScale, 'Zoom controls update scale');
     await ready();
+    check(await panel.isVisible() && await panel.locator('.text').textContent() === visibleTranslation, 'Zoom in preserves the translation panel and text');
     check(await selectText('Scientific evidence') === original, 'Text remains selectable after zoom');
+    await reader.locator('#zoom-out').click(); await ready();
+    check(await panel.isVisible() && await panel.locator('.text').textContent() === visibleTranslation, 'Zoom out preserves the translation panel and text');
+    await reader.locator('#zoom-in').click(); await ready();
     await reader.locator('#fit-width').click(); await ready();
-    check((await reader.locator('#zoom-value').textContent()) === beforeScale, 'Fit width restores initial scale');
+    const fittedPage = await reader.locator('.page[data-page-number="1"]').boundingBox();
+    const readerWidth = await reader.locator('#viewer-container').evaluate((element) => element.clientWidth);
+    check(fittedPage.width <= readerWidth && fittedPage.width >= readerWidth * .9, 'Fit width fills the viewport when explicitly requested');
+    check(await panel.isVisible() && await panel.locator('.text').textContent() === visibleTranslation, 'Fit width preserves the translation panel');
+    await reader.keyboard.press('Escape');
     const spanBox = await reader.locator('.page[data-page-number="1"] .textLayer span').filter({ hasText: 'Scientific evidence' }).first().boundingBox();
     const canvasBox = await reader.locator('.page[data-page-number="1"] canvas').boundingBox();
     check(spanBox.x >= canvasBox.x && spanBox.x + spanBox.width <= canvasBox.x + canvasBox.width + 2, 'Text layer aligned within rendered paper');
@@ -166,15 +170,20 @@ async function main() {
     const right = await selectText('Right column catalytic', 2); await reader.keyboard.press('y'); await translationReady();
     check(lastText === right && !lastText.includes('Left'), 'Right column selection excludes left column');
     await reader.keyboard.press('Escape');
-    await reader.locator('#page-number').fill('3'); await reader.locator('#page-number').press('Enter'); await reader.locator('#pdf-url').focus();
+    await reader.locator('#page-number').fill('3'); await reader.locator('#page-number').press('Enter'); await reader.locator('#viewer-container').focus();
     await reader.waitForFunction(() => document.querySelector('#reader-status').textContent.includes('OCR'));
     check(await reader.locator('#next-page').isDisabled(), 'Last-page navigation bounded');
     const beforeScan = apiCalls;
     await reader.locator('#viewer-container').focus(); await reader.keyboard.press('y');
     check(apiCalls === beforeScan && await panel.count() === 0, 'No-text page hints OCR without request');
-    await reader.locator('#page-number').fill('1'); await reader.locator('#pdf-url').focus(); await ready();
+    await reader.locator('#page-number').fill('1'); await reader.locator('#viewer-container').focus(); await ready();
     apiDelay = 800;
     await selectText('Catalytic reactions'); await reader.keyboard.press('y');
+    await panel.locator('.text[data-state="loading"]').waitFor();
+    await reader.locator('#zoom-in').click(); await ready(); await translationReady();
+    check((await panel.locator('.text').textContent()).includes('Catalytic reactions'), 'Zoom during translation keeps the pending result');
+    await reader.keyboard.press('Escape');
+    await selectText('Scientific literature'); await reader.keyboard.press('y');
     await panel.locator('.text[data-state="loading"]').waitFor();
     await reader.waitForFunction(() => document.querySelector('#literature-translator-panel') !== null);
     await file(localPdf); await ready();
@@ -197,32 +206,28 @@ async function main() {
     check((await reader.locator('#reader-status').textContent()).includes('密码'), 'Encrypted PDF rejected clearly');
     await file(localPdf); await ready();
     check((await reader.locator('#document-name').textContent()) === 'research.pdf', 'Reader recovers after invalid and encrypted files');
-    await reader.locator('#pdf-url').fill(`${origin}/download?id=fixture&token=not-real`);
-    await reader.locator('#load-url').click(); await ready();
-    check((await reader.locator('#document-name').textContent()) === 'download', 'Online PDF without extension loads across origin without CORS');
-    await reader.locator('#pdf-url').fill(`${origin}/blocked`); await reader.locator('#load-url').click();
-    await reader.waitForFunction(() => document.querySelector('#reader-status').dataset.state === 'error');
-    check((await reader.locator('#reader-status').textContent()).includes('下载后本地打开'), 'HTTP failure suggests local fallback');
-    await reader.locator('#pdf-url').fill(`${origin}/not-pdf`); await reader.locator('#load-url').click();
-    await reader.waitForFunction(() => document.querySelector('#reader-status').dataset.state === 'error');
-    check((await reader.locator('#reader-status').textContent()).includes('链接返回了网页'), 'HTML response is not accepted as PDF');
-    await reader.locator('#pdf-url').fill('file:///D:/paper.pdf'); await reader.locator('#load-url').click();
-    check((await reader.locator('#reader-status').textContent()).includes('HTTP / HTTPS'), 'Local file URLs use explicit chooser');
-    await reader.route(`${origin}/disconnected`, (route) => route.abort('internetdisconnected'));
-    await reader.locator('#pdf-url').fill(`${origin}/disconnected`); await reader.locator('#load-url').click();
-    await reader.waitForFunction(() => document.querySelector('#reader-status').dataset.state === 'error');
-    check((await reader.locator('#reader-status').textContent()).includes('检查链接和网络'), 'Disconnected PDF request shows recovery hint');
-    await reader.locator('#pdf-url').fill(`${origin}/download`); await reader.locator('#load-url').click(); await ready();
+    check(await reader.locator('#zoom-value').textContent() === '100%', 'Opening another file resets previous zoom to 100 percent');
     const secondReader = await context.newPage();
-    await secondReader.goto(`${base}/pdf-reader.html?url=${encodeURIComponent(origin + '/download?id=second&token=not-real')}`);
+    await secondReader.goto(`${base}/pdf-reader.html`);
+    await secondReader.locator('html[data-reader-ready="true"]').waitFor();
+    await secondReader.locator('#file-input').setInputFiles(localPdf);
     await secondReader.waitForFunction(() => document.querySelector('#reader-status').dataset.state === 'ready' && document.querySelector('#page-count').textContent.includes('3'));
-    check(!secondReader.url().includes('token='), 'Initial signed URL removed from reader address');
     const beforeCrossCache = apiCalls;
     await secondReader.locator('.textLayer span').filter({ hasText: 'Scientific evidence' }).first().evaluate((element) => {
       const range = document.createRange(); range.selectNodeContents(element); window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
     });
     await secondReader.keyboard.press('y'); await secondReader.getByRole('button', { name: '复制译文', exact: true }).waitFor();
     check(apiCalls === beforeCrossCache && (await secondReader.locator('#literature-translator-panel .note').textContent()).includes('来自缓存'), 'Cache shared across PDF tabs');
+    await reader.locator('#shortcut-button').click(); await reader.keyboard.press('Alt+t');
+    await reader.waitForFunction(() => document.getElementById('shortcut-button').textContent === '翻译 Alt+T' && !document.getElementById('shortcut-button').disabled);
+    await secondReader.waitForFunction(() => document.getElementById('shortcut-button').textContent === '翻译 Alt+T');
+    await secondReader.keyboard.press('Escape');
+    await selectText('Scientific evidence'); await reader.keyboard.press('y');
+    check(await panel.count() === 0, 'Default key stops triggering PDF translation after customization');
+    await reader.keyboard.press('Alt+t'); await translationReady();
+    check((await panel.locator('.text').textContent()).includes(original), 'Custom shortcut translates PDF text');
+    await reader.locator('#shortcut-button').click(); await reader.keyboard.press('y');
+    await reader.waitForFunction(() => document.getElementById('shortcut-button').textContent === '翻译 Y' && !document.getElementById('shortcut-button').disabled);
     await reader.locator('#plugin-toggle').click();
     await secondReader.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'false');
     await secondReader.locator('#literature-translator-panel').waitFor({ state: 'detached' });
@@ -258,19 +263,60 @@ async function main() {
     await web.keyboard.press('y'); await web.getByRole('button', { name: '复制译文', exact: true }).waitFor();
     check(lastText === 'Ordinary HTML translation still works.', 'HTML translation regression passes');
     const popup = await context.newPage(); await popup.goto(`${base}/popup.html`);
-    check(await popup.locator('#open-pdf').count() === 1 && await popup.locator('#open-current-pdf').count() === 1, 'Popup exposes both PDF entry buttons');
+    check(await popup.locator('.pdf-actions button').count() === 1 && await popup.getByRole('button', { name: '打开 PDF 阅读器' }).isVisible(), 'Popup exposes one PDF reader entry');
     const newReaderEvent = context.waitForEvent('page');
     await popup.locator('#open-pdf').click();
     const newReader = await newReaderEvent; await newReader.waitForLoadState();
     check(newReader.url() === `${base}/pdf-reader.html`, 'Popup opens actual extension reader tab');
-    const nativePdf = await context.newPage(); await nativePdf.goto(`${origin}/paper.pdf`);
-    const currentPopup = await context.newPage(); await currentPopup.goto(`${base}/popup.html`);
-    await nativePdf.bringToFront();
-    const currentReaderEvent = context.waitForEvent('page');
-    await currentPopup.locator('#open-current-pdf').click();
-    const currentReader = await currentReaderEvent;
-    await currentReader.waitForFunction(() => document.querySelector('#reader-status')?.dataset.state === 'ready' && document.querySelector('#page-count').textContent.includes('3'));
-    check((await currentReader.locator('#document-name').textContent()) === 'paper.pdf', 'Popup reopens current native PDF URL in extension reader');
+    await newReader.locator('html[data-reader-ready="true"]').waitFor();
+    check(await newReader.locator('#empty-state').isVisible() && await newReader.locator('#open-file').isEnabled(), 'Popup reader offers local file opening');
+    await newReader.locator('#file-input').setInputFiles(localPdf);
+    await newReader.waitForFunction(() => document.querySelector('#reader-status').dataset.state === 'ready');
+    const columns = () => newReader.locator('#pdf-viewer .page').evaluateAll((pages) => pages.filter((page) => Math.abs(page.offsetTop - pages[0].offsetTop) < 2).length);
+    check(await columns() === 1, '100 percent uses a single column when a second page does not fit');
+    await newReader.locator('#zoom-out').click(); await newReader.locator('#zoom-out').click();
+    await newReader.waitForFunction(() => {
+      const pages = document.querySelectorAll('#pdf-viewer .page');
+      return Math.abs(pages[0].offsetTop - pages[1].offsetTop) < 2 && pages[2].offsetTop > pages[0].offsetTop;
+    });
+    await newReader.locator('.page[data-page-number="2"] .textLayer span').first().waitFor();
+    check(await columns() === 2, 'Zooming out automatically displays two columns');
+    check(await newReader.locator('#viewer-container').evaluate((element) => element.scrollWidth <= element.clientWidth), 'Multiple columns fit without horizontal overflow');
+    const secondPageText = newReader.locator('.page[data-page-number="2"] .textLayer span').filter({ hasText: 'Right column independent' }).first();
+    await secondPageText.evaluate((element) => {
+      document.activeElement?.blur(); const range = document.createRange(); range.selectNodeContents(element);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    });
+    await newReader.keyboard.press('y'); await newReader.getByRole('button', { name: '复制译文', exact: true }).waitFor();
+    check((await newReader.locator('#literature-translator-panel .text').textContent()).includes('Right column independent'), 'Text in the second displayed column translates correctly');
+    await newReader.locator('#zoom-out').click(); await newReader.locator('#zoom-out').click();
+    await newReader.waitForFunction(() => {
+      const pages = document.querySelectorAll('#pdf-viewer .page');
+      return [...pages].every((page) => Math.abs(page.offsetTop - pages[0].offsetTop) < 2);
+    });
+    check(await columns() === 3, 'Further zooming out automatically displays three columns');
+    check(await newReader.locator('#literature-translator-panel').isVisible(), 'Automatic column changes preserve the translation panel');
+    await newReader.setViewportSize({ width: 800, height: 1000 });
+    await newReader.waitForFunction(() => {
+      const pages = document.querySelectorAll('#pdf-viewer .page');
+      return Math.abs(pages[0].offsetTop - pages[1].offsetTop) > 2;
+    });
+    check(await columns() === 1 && await newReader.locator('#zoom-value').textContent() === '48%', 'Narrow windows reduce column count without changing numeric zoom');
+    await newReader.setViewportSize({ width: 1365, height: 1000 });
+    await newReader.waitForFunction(() => {
+      const pages = document.querySelectorAll('#pdf-viewer .page');
+      return [...pages].every((page) => Math.abs(page.offsetTop - pages[0].offsetTop) < 2);
+    });
+    await newReader.screenshot({ path: path.join(__dirname, 'pdf-multi-column.png') });
+    for (let i = 0; i < 4; i++) await newReader.locator('#zoom-in').click();
+    await newReader.waitForFunction(() => {
+      const pages = document.querySelectorAll('#pdf-viewer .page');
+      return Math.abs(pages[0].offsetTop - pages[1].offsetTop) > 2;
+    });
+    check(await columns() === 1 && await newReader.locator('#zoom-value').textContent() === '100%', 'Zooming back in restores one column at 100 percent');
+    await newReader.locator('#page-number').fill('3'); await newReader.locator('#viewer-container').focus();
+    await newReader.waitForFunction(() => document.querySelector('#page-number').value === '3' && document.querySelector('#reader-status').textContent.includes('OCR'));
+    check(await newReader.locator('#next-page').isDisabled(), 'Page navigation remains bounded after column reflow');
     const oldBrowserReader = await context.newPage();
     await oldBrowserReader.route(`${base}/pdf-reader.html`, (route) => route.continue());
     await oldBrowserReader.addInitScript(() => Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 Chrome/124.0.0.0' }));

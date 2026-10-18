@@ -11,6 +11,7 @@
 (() => {
   let inProgress = false;
   let currentPanel = null;
+  let panelBounds;
   let pluginEnabled = false;
   let stateRevision = 0;
   let requestEpoch = 0;
@@ -43,8 +44,80 @@
   }
 
   function closePanel() {
+    currentPanel?.cleanup();
     currentPanel?.host.remove();
     currentPanel = null;
+  }
+
+  function enablePanelMovement(panel, header, shadow) {
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
+    const margin = 12;
+    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+    let gesture;
+
+    function applyBounds(bounds) {
+      const maxWidth = Math.max(1, window.innerWidth - margin * 2);
+      const maxHeight = Math.max(1, window.innerHeight - margin * 2);
+      const width = clamp(bounds.width, Math.min(260, maxWidth), maxWidth);
+      const height = clamp(bounds.height, Math.min(200, maxHeight), maxHeight);
+      panelBounds = { width, height, left: clamp(bounds.left, margin, window.innerWidth - width - margin),
+        top: clamp(bounds.top, margin, window.innerHeight - height - margin) };
+      for (const [name, value] of Object.entries(panelBounds)) panel.host.style.setProperty(name, `${value}px`, "important");
+    }
+
+    function start(event, direction) {
+      if (!event.isTrusted || event.button !== 0 || event.target.closest("button")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      gesture = { direction, x: event.clientX, y: event.clientY, bounds: { ...panelBounds }, pointerId: event.pointerId };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+
+    header.title = "拖动标题栏移动；拖动边缘或四角调整大小";
+    header.addEventListener("pointerdown", (event) => start(event, "move"), options);
+    for (const direction of ["n", "ne", "e", "se", "s", "sw", "w", "nw"]) {
+      const handle = document.createElement("span");
+      handle.className = `resize-handle ${direction}`;
+      handle.dataset.direction = direction;
+      handle.setAttribute("aria-hidden", "true");
+      handle.addEventListener("pointerdown", (event) => start(event, direction), options);
+      shadow.append(handle);
+    }
+    shadow.addEventListener("pointermove", (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      event.preventDefault();
+      const { direction, bounds } = gesture;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      const next = { ...bounds };
+      const minWidth = Math.min(260, window.innerWidth - margin * 2);
+      const minHeight = Math.min(200, window.innerHeight - margin * 2);
+      if (direction === "move") {
+        next.left += dx;
+        next.top += dy;
+      } else {
+        if (direction.includes("w")) {
+          next.left = clamp(bounds.left + dx, margin, bounds.left + bounds.width - minWidth);
+          next.width = bounds.width + bounds.left - next.left;
+        }
+        if (direction.includes("e")) next.width = clamp(bounds.width + dx, minWidth, window.innerWidth - margin - bounds.left);
+        if (direction.includes("n")) {
+          next.top = clamp(bounds.top + dy, margin, bounds.top + bounds.height - minHeight);
+          next.height = bounds.height + bounds.top - next.top;
+        }
+        if (direction.includes("s")) next.height = clamp(bounds.height + dy, minHeight, window.innerHeight - margin - bounds.top);
+      }
+      applyBounds(next);
+    }, options);
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      shadow.addEventListener(type, (event) => {
+        if (gesture?.pointerId === event.pointerId) gesture = undefined;
+      }, options);
+    }
+    window.addEventListener("resize", () => applyBounds(panelBounds), options);
+    applyBounds(panelBounds || { left: window.innerWidth - 436, top: window.innerHeight - 376, width: 420, height: 360 });
+    panel.cleanup = () => controller.abort();
   }
 
   // 仅在本扩展阅读页监听换文档事件；普通网页不能借此隐藏或重置翻译状态。
@@ -68,33 +141,45 @@
     const host = document.createElement("div");
     host.id = "literature-translator-panel";
     // 提高普通网页上的叠放层级；浏览器的 top layer 全屏 / modal 不由 z-index 控制。
-    host.style.cssText = "all: initial !important; position: fixed !important; right: 16px !important; bottom: 16px !important; z-index: 2147483647 !important; display: block !important;";
+    host.style.cssText = "all: initial !important; position: fixed !important; z-index: 2147483647 !important; display: block !important;";
     const shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
       :host { color-scheme: light; }
       *, *::before, *::after { box-sizing: border-box; }
-      .panel { width: min(420px, calc(100vw - 32px)); background: #ffffff;
+      .panel { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; background: #ffffff;
         color: #1c1c1e; border: 1px solid rgba(60,60,67,.12);
         border-radius: 20px; box-shadow: 0 16px 48px rgba(0,0,0,.16);
         font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; }
       .header { display: flex; align-items: center; justify-content: space-between;
-        padding: 16px 20px 12px; gap: 12px; }
+        padding: 12px 20px 10px; gap: 12px; flex-shrink: 0; cursor: grab; user-select: none; touch-action: none; }
+      .header:active { cursor: grabbing; }
       .title { font-weight: 650; font-size: 16px; letter-spacing: -.02em; }
       button { font: inherit; cursor: pointer; border-radius: 10px; min-height: 36px; }
       button:focus-visible { outline: 2px solid #007aff; outline-offset: 3px; }
       button:disabled { cursor: wait; opacity: .65; }
       .close { border: none; background: #f2f2f7; color: #636366; font-size: 12px; padding: 4px 10px; }
       .close:hover { background: #e5e5ea; }
-      .text { padding: 0 20px 18px; max-height: min(50vh, 400px); overflow-y: auto;
+      .text { padding: 0 20px 14px; min-height: 0; flex: 1; overflow-y: auto;
         white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
       .text[data-state="error"] { color: #b42318; }
-      .footer { padding: 12px 20px 16px; border-top: 1px solid #e5e5ea; }
+      .footer { padding: 10px 20px 14px; border-top: 1px solid #e5e5ea; flex-shrink: 0; max-height: 48%; overflow-y: auto; }
       .note { color: #636366; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
       .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
       .actions:empty { display: none; }
       .action { padding: 6px 14px; color: #007aff; background: #eef5ff; border: none; }
       .action:hover { background: #dcecff; }
+      .resize-handle { position: absolute; z-index: 2; touch-action: none; }
+      .n, .s { left: 14px; right: 14px; height: 8px; cursor: ns-resize; }
+      .n { top: -3px; } .s { bottom: -3px; }
+      .e, .w { top: 14px; bottom: 14px; width: 8px; cursor: ew-resize; }
+      .e { right: -3px; } .w { left: -3px; }
+      .ne, .nw, .se, .sw { width: 17px; height: 17px; }
+      .ne, .nw { top: -3px; } .se, .sw { bottom: -3px; }
+      .ne, .se { right: -3px; } .nw, .sw { left: -3px; }
+      .nw, .se { cursor: nwse-resize; } .ne, .sw { cursor: nesw-resize; }
+      .se::after { content: ""; position: absolute; width: 7px; height: 7px; right: 7px; bottom: 7px;
+        border-right: 2px solid #aeaeb2; border-bottom: 2px solid #aeaeb2; border-radius: 0 0 2px 0; }
     `;
     const section = document.createElement("section");
     section.className = "panel";
@@ -123,6 +208,7 @@
     shadow.append(style, section);
     document.documentElement.append(host);
     const panel = { host, section, text, note, actions };
+    enablePanelMovement(panel, header, shadow);
     currentPanel = panel;
     return panel;
   }
@@ -260,7 +346,7 @@
   }
 
   document.addEventListener("keydown", (event) => {
-    // 只接受真实用户按键，阻止网页伪造 Y 来触发模型调用。
+    // 只接受真实用户按键，阻止网页伪造快捷键来触发模型调用。
     if (!event.isTrusted || event.isComposing || editingTarget(event)) return;
     if (!pluginEnabled) return;
     if (event.key === "Escape" && currentPanel?.host.isConnected) {
@@ -269,7 +355,7 @@
       closePanel();
       return;
     }
-    if (event.key?.toLowerCase() !== "y" || event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
+    if (!globalThis.PaperParrotShortcuts.matches(event) || event.repeat) return;
     // 浮窗里的按键和选区不作为待翻译网页原文。
     if (currentPanel && event.composedPath().includes(currentPanel.host)) return;
     const selection = window.getSelection();

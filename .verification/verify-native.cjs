@@ -14,7 +14,7 @@ async function main() {
   const extension = path.join(fixture, 'extension');
   fs.mkdirSync(extension);
   // 不复制用户 config.json，避免将未来填写的真实密钥带入临时测试目录。
-  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
+  for (const name of ['manifest.json', 'background.js', 'shortcut.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) fs.copyFileSync(path.join(root, name), path.join(extension, name));
   fs.cpSync(path.join(root, 'vendor'), path.join(extension, 'vendor'), { recursive: true });
   let apiCalls = 0;
   let apiMode = 'success';

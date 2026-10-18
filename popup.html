@@ -22,7 +22,6 @@
       #status[data-state="error"] { color: var(--error); }
       .pdf-actions { display: grid; }
       .pdf-actions button { text-align: left; border: 0; background: transparent; color: var(--blue); padding: 11px 16px; min-height: 44px; display: flex; justify-content: space-between; align-items: center; }
-      .pdf-actions button + button { border-top: 1px solid var(--line); }
       .pdf-actions button:hover { background: #eef5ff; }
       .chevron { font-size: 20px; color: #aeaeb2; line-height: 1; }
       #pdf-status { padding: 0 14px; font-size: 12px; color: var(--error); }
@@ -31,6 +30,7 @@
       .help p + p { margin-top: 6px; }
       footer { margin-top: 12px; padding: 10px 4px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.65; }
     </style>
+    <script src="shortcut.js" defer></script>
     <script src="plugin-control.js" defer></script>
     <script src="popup.js" defer></script>
   </head>
@@ -51,6 +51,15 @@
         <p id="plugin-switch-help" class="switch-help">控制所有网页与 PDF 的翻译，自动记住开关状态。</p>
         <p id="plugin-status" role="status" aria-live="polite"></p>
       </section>
+      <p class="section-label">翻译快捷键</p>
+      <section class="group shortcut-setting" aria-label="快捷键设置">
+        <div class="shortcut-buttons">
+          <button id="shortcut-button" type="button" aria-label="修改翻译快捷键" aria-pressed="false" disabled>Y</button>
+          <button id="shortcut-reset" type="button" disabled>恢复 Y</button>
+        </div>
+        <p class="switch-help">点击上方按键，再按下你想使用的快捷键，自动保存。</p>
+        <p id="shortcut-status" role="status" aria-live="polite"></p>
+      </section>
       <p class="section-label">翻译模型</p>
       <section class="group model" aria-label="已加载模型">
         <span class="label">当前已加载模型</span>
@@ -60,11 +69,10 @@
       <p class="section-label">文献阅读</p>
       <section class="group pdf-actions" aria-label="PDF 阅读">
         <button id="open-pdf" type="button"><span>打开 PDF 阅读器</span><span class="chevron" aria-hidden="true">›</span></button>
-        <button id="open-current-pdf" type="button"><span>使用当前页面地址打开 PDF</span><span class="chevron" aria-hidden="true">›</span></button>
       </section>
       <p id="pdf-status" role="status" aria-live="polite"></p>
       <section class="help" aria-label="使用说明">
-        <p>选中英文后按 <kbd>Y</kbd> 翻译，按 <kbd>Esc</kbd> 收起译文。</p>
+        <p>选中英文后按 <kbd data-translation-shortcut>Y</kbd> 翻译，按 <kbd>Esc</kbd> 收起译文。</p>
         <p>修改模型：编辑 <code>config.json</code>，重新加载插件并刷新阅读页面。</p>
       </section>
       <footer>本地 PDF 可选择或拖入阅读器，扫描版暂不支持。关闭翻译后仍可阅读 PDF。请勿分享含密钥的扩展包。</footer>

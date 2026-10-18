@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "paper-parrot",
   "version": "1.1.0",
-  "description": "选中网页或插件 PDF 阅读页中的英文文字后按 Y 翻译。适用于 Chrome 和 Microsoft Edge。",
+  "description": "选中网页或 PDF 中的英文，使用自定义快捷键翻译（默认 Y）。适用于 Chrome 和 Microsoft Edge。",
   "minimum_chrome_version": "102",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
@@ -13,13 +13,13 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "paper-parrot：选中文字后按 Y",
+    "default_title": "paper-parrot：选段翻译与 PDF 阅读",
     "default_popup": "popup.html"
   },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
+      "js": ["shortcut.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": false
     }

@@ -30,4 +30,12 @@ code { font-family: Consolas, monospace; overflow-wrap: anywhere; }
 #plugin-status { color: var(--error); font-size: 12px; overflow-wrap: anywhere; margin: 8px 0 0; }
 #plugin-status:empty { display: none; }
 [hidden] { display: none !important; }
+.shortcut-setting { padding: 14px 16px; }
+.shortcut-buttons { display: flex; align-items: center; gap: 8px; }
+#shortcut-button, #shortcut-reset { border: 0; border-radius: 8px; padding: 6px 12px; min-height: 32px; }
+#shortcut-button { color: var(--blue); background: #eef5ff; font-weight: 600; white-space: nowrap; }
+#shortcut-button[aria-pressed="true"] { outline: 2px solid var(--blue); outline-offset: 2px; }
+#shortcut-reset { color: var(--muted); background: var(--background); font-size: 12px; }
+#shortcut-status { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+#shortcut-status:empty { display: none; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }

@@ -11,7 +11,14 @@ let messages = 0;
 const bridge = `<script>
   const storageListeners = [];
   let lastEnabled;
-  window.chrome = { storage: { onChanged: { addListener: (handler) => storageListeners.push(handler) } }, runtime: { getURL: (resource) => location.origin + '/' + resource, sendMessage: async (message) => {
+  let lastShortcut;
+  window.chrome = { storage: { local: {
+    get: async () => (await fetch('/settings')).json(),
+    set: async (values) => {
+      const response = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) });
+      if (!response.ok) throw new Error('Mock storage rejected');
+    }
+  }, onChanged: { addListener: (handler) => storageListeners.push(handler) } }, runtime: { getURL: (resource) => location.origin + '/' + (resource === 'popup.html' ? 'popup' : resource), sendMessage: async (message) => {
     const response = await fetch('/message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) });
     if (!response.ok) throw new Error('Simulated communication failure');
     return response.json();
@@ -52,12 +59,16 @@ const bridge = `<script>
       lastEnabled = stats.enabled;
       for (const handler of storageListeners) handler({ literaturePluginEnabledV1: { newValue: stats.enabled } }, 'local');
     }
+    if (lastShortcut !== JSON.stringify(stats.shortcut)) {
+      lastShortcut = JSON.stringify(stats.shortcut);
+      for (const handler of storageListeners) handler({ literatureTranslationShortcutV1: { newValue: stats.shortcut } }, 'local');
+    }
   }, 300);
 </script>`;
 
 const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>paper-parrot 本地验证</title>
 <style>body { margin: 48px; background: #f5f8fb; color: #24334a; font: 15px/1.7 'Segoe UI','Microsoft YaHei',sans-serif; max-width: 750px; } button { padding: 7px 12px; margin: 5px; } input,textarea,[contenteditable] { display:block; margin:10px 0; padding:8px; } #long { height:48px; overflow:auto; overflow-wrap:anywhere; } .controls { margin:20px 0; } </style>
-${bridge}<script src="/content.js" defer></script></head><body>
+${bridge}<script src="/shortcut.js" defer></script><script src="/content.js" defer></script></head><body>
 <h1>paper-parrot · 本地模拟验证</h1><p>此页面只使用模拟模型响应，不发送真实 API 请求。</p>
 <p id="original">Scientific translation preserves terminology, citations, and mathematical notation.</p>
 <button onclick="selectOriginal()">选择示例原文</button><button onclick="selectLong()">选择超长原文</button><button onclick="clearSelection()">清除选区</button>
@@ -79,6 +90,14 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://localhost');
     response.setHeader('Cache-Control', 'no-store');
+    if (url.pathname === '/settings') {
+      if (request.method === 'POST') {
+        const values = await readBody(request);
+        localStorage.literatureTranslationShortcutV1 = values.literatureTranslationShortcutV1;
+      }
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ literatureTranslationShortcutV1: localStorage.literatureTranslationShortcutV1 })); return;
+    }
     if (request.method === 'POST' && url.pathname === '/message') {
       const message = await readBody(request);
       if (background.controls.mode === 'communication') { response.writeHead(503); response.end('Unavailable'); return; }
@@ -94,9 +113,9 @@ const server = http.createServer(async (request, response) => {
     }
     if (url.pathname === '/stats') {
       const state = await background.send({ type: 'GET_PLUGIN_STATE' });
-      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ apiCalls: background.stats.apiCalls, messages, enabled: state.enabled })); return;
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ apiCalls: background.stats.apiCalls, messages, enabled: state.enabled, shortcut: localStorage.literatureTranslationShortcutV1 })); return;
     }
-    if (['/content.js', '/popup.js', '/plugin-control.js'].includes(url.pathname)) {
+    if (['/shortcut.js', '/content.js', '/popup.js', '/plugin-control.js'].includes(url.pathname)) {
       response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); response.end(fs.readFileSync(path.join(root, url.pathname.slice(1)))); return;
     }
     if (url.pathname === '/ui.css') {
@@ -104,7 +123,7 @@ const server = http.createServer(async (request, response) => {
     }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (url.pathname === '/popup') {
-      response.end(fs.readFileSync(path.join(root, 'popup.html'), 'utf8').replace('<script src="popup.js" defer></script>', bridge + '<script src="/popup.js" defer></script>'));
+      response.end(fs.readFileSync(path.join(root, 'popup.html'), 'utf8').replace('<script src="shortcut.js" defer></script>', bridge + '<script src="/shortcut.js" defer></script>'));
     } else response.end(page);
   } catch {
     response.writeHead(500); response.end('Mock server error');

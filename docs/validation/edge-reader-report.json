@@ -1,9 +1,10 @@
 {
   "suite": "edge-reader-runtime",
   "status": "passed",
-  "assertions": 10,
+  "assertions": 12,
   "checks": [
     "Edge renders PDF text layer",
+    "Edge opens PDF at 100 percent",
     "Edge Y selection translation UI works with mock backend",
     "Edge closes translation panel",
     "Edge zoom works",
@@ -12,6 +13,7 @@
     "Edge off state ignores Y",
     "Edge PDF navigation stays enabled",
     "Edge switch supports keyboard",
+    "Edge automatically displays columns that fit the window",
     "Edge has no uncaught exceptions: "
   ],
   "edgeVersion": "152.0.4191.53",

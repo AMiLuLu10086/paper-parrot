@@ -1,10 +1,10 @@
 /**
  * Chrome / Edge 共用 chrome.* API，无 webextension-polyfill，不兼容 Firefox。
  * PDF.js、worker 和解码资源均随扩展打包；本地文件只在本机解析，不上传 PDF。
- * 仅主动选中文字按 Y 时调用现有后台翻译；扫描版 OCR 和 PDF 脚本不执行。
+ * 仅主动选中文字按自定义快捷键时调用现有后台翻译；扫描版 OCR 和 PDF 脚本不执行。
  */
 const elements = Object.fromEntries([
-  "open-file", "file-input", "url-form", "pdf-url", "load-url", "document-name",
+  "open-file", "file-input", "document-name",
   "previous-page", "next-page", "page-number", "page-count", "zoom-out", "zoom-in",
   "zoom-value", "fit-width", "reader-status", "empty-state", "viewer-container", "pdf-viewer", "drop-overlay",
 ].map((id) => [id, document.getElementById(id)]));
@@ -43,32 +43,29 @@ function showPageHint() {
   } else if (textState === "empty") {
     showStatus("当前页未检测到文字层，可能是扫描页，需要 OCR；本次暂不支持。", "warning");
   } else {
-    showStatus(textState === "text" ? "选中 PDF 中的英文文字，按 Y 翻译。" : "正在准备当前页文字层…", textState === "text" ? "ready" : "loading");
+    showStatus(textState === "text" ? `选中英文，按 ${globalThis.PaperParrotShortcuts.label()} 翻译。` : "正在准备当前页文字层…", textState === "text" ? "ready" : "loading");
   }
 }
 
 function resetSelection() {
   window.getSelection()?.removeAllRanges();
-  // content.js 仅在本扩展阅读页监听本事件。关闭旧浮窗但不重复发送或取消付费请求。
-  document.dispatchEvent(new Event("literature-document-reset"));
 }
 
-// 错误不展示服务器原始响应或完整 URL，避免暴露在线链接的签名和 token。
-function pdfErrorMessage(error, online) {
+function pdfErrorMessage(error) {
   if (error?.name === "PasswordException") return "此 PDF 需要密码，本次暂不支持。请打开不带密码保护的文献。";
-  if (error?.name === "InvalidPDFException") return "文件无法解析为 PDF，可能已损坏或链接返回了网页。请重新选择 PDF 文件。";
-  return online
-    ? "在线 PDF 加载失败，请检查链接和网络；需要登录或链接失效时，请下载后本地打开。"
-    : "PDF 文件加载失败，请检查文件是否完整，然后重新选择。";
+  if (error?.name === "InvalidPDFException") return "文件无法解析为 PDF，可能已损坏或格式不正确。请重新选择 PDF 文件。";
+  return "PDF 文件加载失败，请检查文件是否完整，然后重新选择。";
 }
 
-async function openDocument(makeSource, label, online = false) {
+async function openDocument(makeSource, label) {
   const epoch = ++documentEpoch;
   const previousTask = loadingTask;
   loadingTask = null;
   pdfDocument = null;
   pageTextStates.clear();
   resetSelection();
+  // 只有切换文献才关闭译文；缩放只清空失效的原文选区，保留浮窗与进行中的请求。
+  document.dispatchEvent(new Event("literature-document-reset"));
   viewer.setDocument(null);
   linkService.setDocument(null);
   updateNavigation();
@@ -94,7 +91,7 @@ async function openDocument(makeSource, label, online = false) {
       useWorkerFetch: true, withCredentials: false, enableXfa: false,
     });
     loadingTask = task;
-    // 首次在线加载的等待上限；加载后继续使用 PDF.js 的按需网络读取能力。
+    // 限制文件解析的等待时间，损坏文献也能恢复到选择文件状态。
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => {
         timedOut = true;
@@ -119,8 +116,8 @@ async function openDocument(makeSource, label, online = false) {
     linkService.setDocument(null);
     updateNavigation();
     elements["empty-state"].hidden = false;
-    showStatus(timedOut ? "PDF 加载等待超过 60 秒，请检查网络或下载后本地打开。" : pdfErrorMessage(error, online), "error");
-    // 捕获清理异常，不将带 URL 的原始错误写入界面或控制台。
+    showStatus(timedOut ? "PDF 加载等待超过 60 秒，请检查文件后重新打开。" : pdfErrorMessage(error), "error");
+    // 捕获清理异常，不向界面或控制台输出原始错误。
     if (task) await task.destroy().catch(() => undefined);
   } finally { clearTimeout(timer); }
 }
@@ -131,29 +128,12 @@ function openFile(file) {
   void openDocument(async () => ({ data: new Uint8Array(await file.arrayBuffer()) }), file.name || "本地 PDF");
 }
 
-function openUrl(value) {
-  let url;
-  try {
-    url = new URL(value.trim());
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Unsupported URL");
-  } catch {
-    showStatus("请输入有效的 HTTP / HTTPS PDF 链接。本地文件请用“打开本地 PDF”。", "error");
-    return;
-  }
-  elements["pdf-url"].value = url.href;
-  let label;
-  try { label = decodeURIComponent(url.pathname.split("/").pop() || "在线 PDF"); }
-  catch { label = "在线 PDF"; }
-  void openDocument(async () => ({ url: url.href }), label, true);
-}
-
 function bindControls() {
   elements["open-file"].addEventListener("click", () => elements["file-input"].click());
   elements["file-input"].addEventListener("change", () => {
     openFile(elements["file-input"].files[0]);
     elements["file-input"].value = ""; // 同一个文件修复后可重新选择。
   });
-  elements["url-form"].addEventListener("submit", (event) => { event.preventDefault(); openUrl(elements["pdf-url"].value); });
   elements["previous-page"].addEventListener("click", () => { viewer.currentPageNumber--; });
   elements["next-page"].addEventListener("click", () => { viewer.currentPageNumber++; });
   elements["page-number"].addEventListener("change", () => {
@@ -195,7 +175,7 @@ async function initialize() {
     pdfjs = await import("./vendor/pdfjs/build/pdf.mjs");
     // 阅读器模块使用官方全局导出；动态顺序加载避免依赖尚未初始化。
     globalThis.pdfjsLib = pdfjs;
-    const { EventBus, PDFViewer, PDFLinkService } = await import("./vendor/pdfjs/web/pdf_viewer.mjs");
+    const { EventBus, PDFViewer, PDFLinkService, ScrollMode } = await import("./vendor/pdfjs/web/pdf_viewer.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdfjs/build/pdf.worker.mjs");
     const eventBus = new EventBus();
     linkService = new PDFLinkService({ eventBus });
@@ -208,9 +188,18 @@ async function initialize() {
     });
     linkService.setViewer(viewer);
     eventBus.on("pagesinit", () => {
-      viewer.currentScaleValue = "page-width";
+      // 原生换行模式随页面尺寸自动增加列数，并保留 PDF.js 的可见页渲染与文字层定位。
+      viewer.scrollMode = ScrollMode.WRAPPED;
+      viewer.currentScale = 1;
       updateNavigation();
     });
+    const resizeObserver = new ResizeObserver(() => {
+      if (!pdfDocument) return;
+      if (viewer.currentScaleValue === "page-width") viewer.currentScaleValue = "page-width";
+      viewer.update();
+    });
+    resizeObserver.observe(elements["viewer-container"]);
+    window.addEventListener("pagehide", () => resizeObserver.disconnect(), { once: true });
     eventBus.on("pagechanging", () => { updateNavigation(); showPageHint(); });
     eventBus.on("scalechanging", updateNavigation);
     eventBus.on("textlayerrendered", async ({ source, pageNumber, error }) => {
@@ -234,12 +223,9 @@ async function initialize() {
     });
     bindControls();
     elements["open-file"].disabled = false;
-    elements["load-url"].disabled = false;
     document.documentElement.dataset.readerReady = "true";
-    showStatus("打开本地 PDF，或粘贴在线 PDF 链接。");
-    const initialUrl = new URL(location.href).searchParams.get("url");
-    // 清除阅读页地址中的签名链接，避免后续复制阅读页地址时带出下载 token。
-    if (initialUrl) { history.replaceState(null, "", location.pathname); openUrl(initialUrl); }
+    showStatus("打开或拖入本地 PDF · 选中文字即可翻译");
+    globalThis.PaperParrotShortcuts.subscribe(showPageHint);
   } catch {
     showStatus("PDF 阅读器初始化失败，请检查 vendor/pdfjs 文件是否完整，并重新加载扩展。", "error");
   }

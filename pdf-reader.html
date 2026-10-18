@@ -8,32 +8,16 @@
     <link rel="stylesheet" href="vendor/pdfjs/web/pdf_viewer.css">
     <link rel="stylesheet" href="ui.css">
     <link rel="stylesheet" href="pdf-reader.css">
+    <script src="shortcut.js" defer></script>
     <script src="content.js" defer></script>
     <script src="plugin-control.js" defer></script>
     <script src="pdf-reader.js" type="module"></script>
   </head>
   <body>
     <header class="reader-header">
-      <div class="identity"><strong>paper-parrot</strong><span>PDF 阅读</span></div>
-      <p class="shortcut">选中文字按 <kbd>Y</kbd> 翻译 · <kbd>Esc</kbd> 关闭译文</p>
-      <div class="reader-toggle">
-        <div class="toggle-row">
-          <span id="plugin-toggle-title" class="toggle-title">启用翻译</span>
-          <div class="toggle-meta">
-            <span id="plugin-state-label" aria-live="polite">读取中…</span>
-            <button id="plugin-toggle" class="ios-switch" type="button" role="switch" aria-checked="false" aria-labelledby="plugin-toggle-title" disabled></button>
-          </div>
-        </div>
-        <p id="plugin-status" role="status" aria-live="polite"></p>
-      </div>
-      <button id="open-file" type="button" disabled>打开本地 PDF</button>
+      <div class="identity"><strong>paper-parrot</strong></div>
+      <button id="open-file" type="button" disabled>打开 PDF</button>
       <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
-    </header>
-    <form id="url-form" class="url-bar">
-      <label for="pdf-url">在线 PDF</label>
-      <input id="pdf-url" type="url" placeholder="粘贴 PDF 链接，也支持没有 .pdf 后缀的地址" autocomplete="off" spellcheck="false">
-      <button id="load-url" type="submit" disabled>打开链接</button>
-    </form>
     <nav class="toolbar" aria-label="阅读控制">
       <span id="document-name" title="尚未打开文献">尚未打开文献</span>
       <div class="page-controls">
@@ -50,13 +34,24 @@
         <button id="fit-width" type="button" disabled>适应宽度</button>
       </div>
     </nav>
-    <div class="status-bar"><p id="reader-status" role="status" aria-live="polite">正在准备阅读器…</p><span>仅发送主动选择的文字</span></div>
+      <div class="reader-options">
+        <button id="shortcut-button" type="button" data-prefix="翻译 " aria-label="修改翻译快捷键" aria-pressed="false" title="点击设置翻译快捷键，默认 Y" disabled>翻译 Y</button>
+        <div class="reader-toggle">
+          <span id="plugin-toggle-title" class="sr-only">启用翻译</span>
+          <span id="plugin-state-label" aria-live="polite">读取中…</span>
+          <button id="plugin-toggle" class="ios-switch" type="button" role="switch" aria-checked="false" aria-labelledby="plugin-toggle-title" disabled></button>
+        </div>
+      </div>
+      <p id="plugin-status" role="status" aria-live="polite"></p>
+      <p id="shortcut-status" role="status" aria-live="polite"></p>
+    </header>
+    <div class="status-bar"><p id="reader-status" role="status" aria-live="polite">正在准备阅读器…</p><span>缩小可并排阅读多页 · Esc 关闭译文</span></div>
     <main class="reading-area" aria-label="PDF 文献">
       <div id="empty-state">
         <div class="paper-symbol" aria-hidden="true">PDF</div>
         <h1>打开文献，选段翻译</h1>
-        <p>点击上方“打开本地 PDF”，或把文件拖到这里。</p>
-        <p>在线文献可粘贴链接。文件在本机解析，选中英文后按 Y 翻译。</p>
+        <p>点击上方“打开 PDF”，或把文件拖到这里。</p>
+        <p>文件在本机解析，选中英文后按 <kbd data-translation-shortcut>Y</kbd> 翻译。</p>
         <p class="muted">支持文字版 PDF；扫描版、密码保护文件暂不支持。</p>
       </div>
       <!-- PDFViewer 要求滚动容器为绝对定位；组件维护可见页面渲染队列。 -->

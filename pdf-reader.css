@@ -4,36 +4,37 @@
 body { height: 100vh; margin: 0; overflow: hidden; display: flex; flex-direction: column;
   color: var(--ink); background: var(--canvas); }
 button, input { font: inherit; }
-button:not(.ios-switch) { border: none; border-radius: 10px; min-height: 36px; padding: 7px 12px;
+button:not(.ios-switch) { border: none; border-radius: 7px; min-height: 28px; padding: 3px 8px;
   color: var(--blue); background: #eef5ff; white-space: nowrap; }
 button:not(.ios-switch):hover:enabled { background: #dcecff; }
 button:disabled, input:disabled { opacity: .5; cursor: default; }
 button:focus-visible, input:focus-visible, #viewer-container:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-input { border: 1px solid var(--line); background: var(--background); border-radius: 10px; padding: 8px 11px; color: var(--ink); min-height: 36px; }
-.reader-header { display: flex; align-items: center; gap: 24px; padding: 16px 24px; background: #fff; border-bottom: 1px solid var(--line); }
-.identity { display: flex; align-items: baseline; gap: 12px; }
-.identity strong { font-size: 24px; font-weight: 700; letter-spacing: -.04em; }
-.identity span { font-size: 12px; color: var(--muted); border-left: 1px solid var(--line); padding-left: 12px; }
-.shortcut { flex: 1; text-align: right; margin: 0; color: var(--muted); font-size: 12px; }
-.reader-toggle { flex-shrink: 0; max-width: 280px; }
-.reader-toggle .toggle-title { font-size: 13px; }
+input { border: 1px solid var(--line); background: var(--background); border-radius: 7px; padding: 3px 6px; color: var(--ink); min-height: 28px; }
+.reader-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 7px 14px; background: #fff; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.identity { flex-shrink: 0; }
+.identity strong { font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
+.reader-options, .reader-toggle { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.reader-options { margin-left: auto; }
+.reader-toggle .ios-switch { width: 38px; height: 24px; min-height: 24px; }
+.reader-toggle .ios-switch::after { width: 20px; height: 20px; }
+.reader-toggle .ios-switch[aria-checked="true"]::after { transform: translateX(14px); }
+.reader-header #shortcut-button { min-height: 28px; padding: 3px 8px; font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.reader-header #plugin-status, .reader-header #shortcut-status { flex-basis: 100%; margin: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 #open-file { background: var(--blue); color: white; }
 #open-file:hover:enabled { background: #0066d6; }
-.url-bar { display: flex; gap: 12px; align-items: center; background: #fff; padding: 12px 24px; border-bottom: 1px solid var(--line); }
-.url-bar label { font-size: 12px; color: var(--muted); flex-shrink: 0; }
-#pdf-url { flex: 1; min-width: 80px; font-size: 13px; }
-.toolbar { display: flex; gap: 20px; align-items: center; padding: 10px 24px; background: #fff; border-bottom: 1px solid var(--line); }
-#document-name { flex: 1; min-width: 60px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }
-.page-controls, .zoom-controls { display: flex; gap: 8px; align-items: center; }
+.toolbar { display: flex; flex: 1; gap: 12px; align-items: center; min-width: 390px; }
+#document-name { flex: 1; min-width: 40px; max-width: 260px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
+.page-controls, .zoom-controls { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
 .page-controls label { font-size: 12px; color: var(--muted); }
-#page-number { width: 65px; text-align: center; }
-#page-count, #zoom-value { font: 13px Consolas, monospace; min-width: 42px; }
-.status-bar { display: flex; justify-content: space-between; gap: 16px; padding: 8px 24px; background: var(--background); font-size: 12px; color: var(--muted); }
+#page-number { width: 52px; text-align: center; }
+#page-count, #zoom-value { font: 12px Consolas, monospace; min-width: 36px; }
+.status-bar { display: flex; justify-content: space-between; gap: 12px; padding: 3px 14px; background: var(--background); font-size: 11px; color: var(--muted); flex-shrink: 0; }
 #reader-status { margin: 0; overflow-wrap: anywhere; }
 #reader-status[data-state="error"] { color: var(--error); }
 .status-bar > span { flex-shrink: 0; }
 .reading-area { position: relative; flex: 1; min-height: 0; }
-#viewer-container { position: absolute; inset: 0; overflow: auto; padding: 20px 0; }
+#viewer-container { position: absolute; inset: 0; overflow: auto; padding: 10px 0; }
 #empty-state { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column;
   justify-content: center; align-items: center; text-align: center; gap: 12px; padding: 28px; }
 #empty-state h1 { font-size: 28px; font-weight: 650; letter-spacing: -.03em; margin: 8px 0; }
@@ -46,19 +47,22 @@ input { border: 1px solid var(--line); background: var(--background); border-rad
 [hidden] { display: none !important; }
 /* 保持 PDF.js 内部页面盒模型；全局 border-box 会破坏它的坐标计算。 */
 .pdfViewer .page, .pdfViewer .textLayer { box-sizing: content-box; }
-@media (max-width: 800px) {
-  .reader-header, .toolbar { gap: 12px; padding-left: 12px; padding-right: 12px; flex-wrap: wrap; }
-  .shortcut { text-align: left; flex-basis: 100%; order: 2; }
-  .reader-toggle { margin-left: auto; }
+@media (max-width: 1080px) {
+  .toolbar { order: 2; flex-basis: 100%; min-width: 0; }
+  #document-name { max-width: none; }
+}
+@media (max-width: 600px) {
+  .reader-header { gap: 6px 8px; padding: 6px 8px; }
+  .identity strong { font-size: 15px; }
+  .toolbar { gap: 6px; flex-wrap: wrap; }
   #document-name { flex-basis: 100%; }
-  .url-bar, .status-bar { padding-left: 12px; padding-right: 12px; }
+  .zoom-controls { margin-left: auto; }
+  .page-controls label, .reader-toggle #plugin-state-label { display: none; }
+  .reader-options { gap: 6px; }
+  .status-bar { padding-left: 8px; padding-right: 8px; }
   .status-bar > span { display: none; }
 }
-@media (max-width: 420px) {
-  .identity { gap: 8px; }
-  .identity strong { font-size: 20px; }
-  .reader-header { column-gap: 8px; }
-  .reader-toggle { margin-left: 0; }
-  .url-bar { gap: 8px; }
-  .page-controls, .zoom-controls { gap: 6px; }
+@media (max-width: 360px) {
+  .page-controls, .zoom-controls { gap: 3px; }
+  .toolbar button { padding-left: 6px; padding-right: 6px; }
 }

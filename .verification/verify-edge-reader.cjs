@@ -36,7 +36,14 @@ async function main() {
     await page.addInitScript((origin) => {
       let enabled = true;
       const listeners = [];
-      globalThis.chrome = { storage: { onChanged: { addListener: (handler) => listeners.push(handler) } }, runtime: {
+      const settings = {};
+      globalThis.chrome = { storage: { local: {
+        get: async () => ({ ...settings }),
+        set: async (values) => {
+          Object.assign(settings, values);
+          for (const handler of listeners) handler(Object.fromEntries(Object.entries(values).map(([key, newValue]) => [key, { newValue }])), 'local');
+        },
+      }, onChanged: { addListener: (handler) => listeners.push(handler) } }, runtime: {
         getURL: (resource) => origin + '/' + resource,
         sendMessage: async (message) => {
           if (message.type === 'GET_PLUGIN_STATE') return { ok: true, enabled };
@@ -56,6 +63,7 @@ async function main() {
     await page.locator('#file-input').setInputFiles(filePath);
     await page.waitForFunction(() => document.querySelector('#reader-status').dataset.state === 'ready' && document.querySelector('#page-count').textContent === '/ 2');
     check(await page.locator('.textLayer span').filter({ hasText: 'Edge reads' }).count() === 1, 'Edge renders PDF text layer');
+    check(await page.locator('#zoom-value').textContent() === '100%', 'Edge opens PDF at 100 percent');
     await page.locator('.textLayer span').filter({ hasText: 'Edge reads' }).evaluate((element) => {
       const range = document.createRange(); range.selectNodeContents(element); window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
     });
@@ -81,6 +89,12 @@ async function main() {
     check(await page.locator('#zoom-in').isEnabled(), 'Edge PDF navigation stays enabled');
     await page.locator('#plugin-toggle').focus(); await page.keyboard.press('Space');
     check(await page.locator('#plugin-toggle').getAttribute('aria-checked') === 'true', 'Edge switch supports keyboard');
+    for (let i = 0; i < 3; i++) await page.locator('#zoom-out').click();
+    await page.waitForFunction(() => {
+      const pages = document.querySelectorAll('#pdf-viewer .page');
+      return Math.abs(pages[0].offsetTop - pages[1].offsetTop) < 2;
+    });
+    check(await page.locator('#viewer-container').evaluate((element) => element.scrollWidth <= element.clientWidth), 'Edge automatically displays columns that fit the window');
     await page.screenshot({ path: path.join(__dirname, 'edge-pdf-reader.png') });
     check(errors.length === 0, `Edge has no uncaught exceptions: ${errors.join('; ')}`);
     const report = { suite: 'edge-reader-runtime', status: 'passed', assertions: checks.length, checks, edgeVersion: browser.version(), usesRealApi: false, notes: 'Real Microsoft Edge engine, HTTP-hosted reader, mocked chrome.runtime. NOT a native Edge extension installation test.' };

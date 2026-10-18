@@ -12,7 +12,7 @@ function check(condition, label) { assert.ok(condition, label); checks.push(labe
 async function main() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'literature-ui-'));
   const extension = path.join(fixture, 'extension'); fs.mkdirSync(extension);
-  for (const name of ['manifest.json', 'background.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) {
+  for (const name of ['manifest.json', 'background.js', 'shortcut.js', 'content.js', 'popup.html', 'popup.js', 'pdf-reader.html', 'pdf-reader.js', 'pdf-reader.css', 'plugin-control.js', 'ui.css']) {
     fs.copyFileSync(path.join(root, name), path.join(extension, name));
   }
   fs.cpSync(path.join(root, 'vendor'), path.join(extension, 'vendor'), { recursive: true });
@@ -27,7 +27,7 @@ async function main() {
       return;
     }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end('<!doctype html><html><body><p id="source">Long translation UI fixture.</p><p id="error-source">Error UI fixture.</p></body></html>');
+    response.end('<!doctype html><html><body><p id="source">Long translation UI fixture.</p><p id="error-source">Error UI fixture.</p><button id="shortcut-button">Page button</button><kbd data-translation-shortcut>Page label</kbd></body></html>');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -89,6 +89,30 @@ async function main() {
     await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
     check(await panel.locator('.text').evaluate((element) => element.scrollHeight > element.clientHeight), 'Long translation scrolls inside panel');
     check(await panel.locator('.panel').evaluate((element) => getComputedStyle(element).borderRadius === '20px'), 'Result uses iOS rounded card');
+    async function drag(locator, dx, dy) {
+      const box = await locator.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 12 });
+      await page.mouse.up();
+    }
+    const initialBox = await panel.boundingBox();
+    await drag(panel.locator('.title'), -450, -300);
+    const movedBox = await panel.boundingBox();
+    check(movedBox.x < initialBox.x - 400 && movedBox.y < initialBox.y - 250, 'Dragging the title moves the translation window');
+    for (const direction of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
+      const before = await panel.boundingBox();
+      await drag(panel.locator(`.resize-handle.${direction}`), direction.includes('w') ? -20 : direction.includes('e') ? 20 : 0,
+        direction.includes('n') ? -15 : direction.includes('s') ? 15 : 0);
+      const after = await panel.boundingBox();
+      check(after.width > before.width || after.height > before.height, `Translation window resizes from ${direction} edge or corner`);
+    }
+    await drag(panel.locator('.resize-handle.w'), 1200, 0);
+    check(Math.round((await panel.boundingBox()).width) === 260, 'Window resizing enforces a readable minimum width');
+    await drag(panel.locator('.resize-handle.n'), 0, 1200);
+    check(Math.round((await panel.boundingBox()).height) === 200, 'Window resizing enforces a readable minimum height');
+    await drag(panel.locator('.resize-handle.se'), 200, 160);
+    check((await panel.locator('.text').textContent()).includes('模拟译文'), 'Dragging and resizing preserve the translation');
     await page.screenshot({ path: path.join(__dirname, 'ios-long-translation.png') });
     await page.setViewportSize({ width: 390, height: 844 });
     const box = await panel.locator('.panel').boundingBox();
@@ -102,6 +126,43 @@ async function main() {
     check((await panel.locator('.text').textContent()).includes('429'), 'Error panel retains retry and readable error');
     await page.screenshot({ path: path.join(__dirname, 'ios-translation-error.png') });
 
+    await page.keyboard.press('Escape'); mode = 'success';
+    await popup.locator('#shortcut-button').click(); await popup.keyboard.press('t');
+    await popup.waitForFunction(() => document.getElementById('shortcut-button').textContent === 'T' && !document.getElementById('shortcut-button').disabled);
+    await select('#source'); await page.keyboard.press('y');
+    check(await panel.count() === 0, 'Old default key no longer translates after customization');
+    await page.keyboard.press('t'); await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
+    check(await panel.isVisible(), 'Custom single key applies to an already open webpage');
+    check(await page.locator('#shortcut-button').textContent() === 'Page button' && await page.locator('[data-translation-shortcut]').textContent() === 'Page label', 'Shortcut settings leave similarly named webpage controls untouched');
+    await page.keyboard.press('Escape');
+    await popup.locator('#shortcut-button').click(); await popup.keyboard.press('Control+Shift+k');
+    await popup.waitForFunction(() => document.getElementById('shortcut-button').textContent === 'Ctrl+Shift+K' && !document.getElementById('shortcut-button').disabled);
+    await select('#source'); await page.keyboard.press('k');
+    check(await panel.count() === 0, 'Custom combination requires its modifiers');
+    await page.keyboard.press('Control+Shift+k'); await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
+    check(await panel.isVisible(), 'Custom key combination triggers webpage translation');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => { const input = document.createElement('input'); input.id = 'typing'; document.body.append(input); });
+    await select('#source'); await page.locator('#typing').press('Control+Shift+k');
+    check(await panel.count() === 0, 'Custom shortcut respects input field protection');
+    await popup.locator('#shortcut-button').click(); await popup.keyboard.press('Escape');
+    check(await popup.locator('#shortcut-button').textContent() === 'Ctrl+Shift+K', 'Escape cancels shortcut recording');
+    await popup.evaluate(() => {
+      const original = chrome.storage.local.set.bind(chrome.storage.local);
+      window.restoreShortcutWrite = () => { chrome.storage.local.set = original; };
+      chrome.storage.local.set = () => Promise.reject(new Error('Fixture storage failure'));
+    });
+    await popup.locator('#shortcut-button').click(); await popup.keyboard.press('Alt+q');
+    await popup.getByText('快捷键保存失败，已保留原设置，请重试。', { exact: true }).waitFor();
+    check(await popup.locator('#shortcut-button').textContent() === 'Ctrl+Shift+K', 'Failed shortcut save preserves the working key');
+    await popup.evaluate(() => window.restoreShortcutWrite());
+    await popup.locator('#shortcut-reset').click();
+    await popup.waitForFunction(() => document.getElementById('shortcut-button').textContent === 'Y' && !document.getElementById('shortcut-button').disabled);
+    await select('#source'); await page.keyboard.press('y'); await page.getByRole('button', { name: '复制译文', exact: true }).waitFor();
+    check(await panel.isVisible(), 'Reset restores the default translation key');
+    await popup.locator('#shortcut-button').click(); await popup.keyboard.press('F8');
+    await popup.waitForFunction(() => document.getElementById('shortcut-button').textContent === 'F8' && !document.getElementById('shortcut-button').disabled);
+
     // Both controls remain usable when configuration is missing on next browser startup.
     await popup.locator('#plugin-toggle').click();
     await popup.waitForFunction(() => document.getElementById('plugin-toggle').getAttribute('aria-checked') === 'false' && !document.getElementById('plugin-toggle').disabled);
@@ -113,6 +174,8 @@ async function main() {
     const badPopup = await context.newPage(); await badPopup.setViewportSize({ width: 360, height: 600 });
     await badPopup.goto(base + '/popup.html');
     await badPopup.waitForFunction(() => document.getElementById('status').dataset.state === 'error' && !document.getElementById('plugin-toggle').disabled);
+    await badPopup.waitForFunction(() => document.getElementById('shortcut-button').textContent === 'F8');
+    check(await badPopup.locator('#shortcut-button').isEnabled(), 'Custom shortcut persists across browser restart and broken model config');
     check(await badPopup.locator('#plugin-toggle').getAttribute('aria-checked') === 'false', 'Broken config does not block reading switch state');
     await badPopup.screenshot({ path: path.join(__dirname, 'ios-popup-config-error.png'), fullPage: true });
     await badPopup.locator('#plugin-toggle').click();
